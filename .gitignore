@@ -1,0 +1,8 @@
+__pycache__/
+__dev_/
+side_code
+*.pyc
+*.pytest_cache
+data/img
+*.egg-info
+*.zip
