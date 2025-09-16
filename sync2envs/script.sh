@@ -1,8 +1,15 @@
+#!/bin/bash
+
+# execute via `source` or `.`
+# don't execute with `./script.sh`, it won't work
+
 
 # run as source srcipt.sh ...
+# echo "First argument is" "$1"
 
-number_of_iterations=2
-dataset=hplc
+dataset="$1"
+number_of_iterations="$2"
+echo "dataset '$1' with number of iterations '$2'"
 
 echo "self pid is:" $$
 # make shure directory is clean
@@ -21,28 +28,28 @@ touch $inp_file
 touch $out_file
 
 # first part
-model(){
+benchmark(){
     mamba deactivate
     mamba activate olympus
 
-    python foo.py from_M_to_B from_B_to_M $inp_file $out_file $number_of_iterations $dataset
+    python benchmark_runner.py from_M_to_B from_B_to_M $inp_file $out_file $number_of_iterations $dataset
 }
-model >&2 &
-modelpid=$!
-echo "model pid is" $modelpid
+benchmark >&2 &
+benchmarkpid=$!
+echo "benchmark pid is" $benchmarkpid
 
 # second part
-benchmark(){
+model(){
     mamba deactivate
     mamba activate tidyhebo
 
-    python bar.py from_M_to_B from_B_to_M $inp_file $out_file $number_of_iterations $dataset
+    python model_runner.py from_M_to_B from_B_to_M $inp_file $out_file $number_of_iterations $dataset
 }
 
-benchmark >&2 &
-benchmarkpid=$!  # pid of last background task
+model >&2 &
+modelpid=$!  # pid of last background task
 
-echo "benchmark pid is:" $benchmarkpid
+echo "benchmark pid is:" $modelpid
 wait $benchmarkpid
 wait $modelpid
 

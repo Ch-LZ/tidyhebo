@@ -1,19 +1,18 @@
 # benchmark here
 
 import os
+import sys
 conda_prefix = os.path.basename(os.getenv('CONDA_PREFIX'))
-print(f"foo is running in: {conda_prefix}")
+print(f"foo is running in: {conda_prefix} with {sys.executable}")
 
 from olympus import Emulator
 
 import numpy as np
-import sys
 
 
 pipe1, pipe2, inp_file, output_file, number_of_iterations, dataset = sys.argv[1:]
 
 number_of_iterations = int(number_of_iterations)
-
 # initialize emulator
 dataset_name = dataset
 em = Emulator(dataset_name, "BayesNeuralNet")
