@@ -7,3 +7,4 @@ data/img
 *.egg-info
 *.zip
 notebooks
+img
