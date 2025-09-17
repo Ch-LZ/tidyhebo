@@ -2,6 +2,8 @@
 cd tidyhebo
 pip install .
 
+При этом из версий библиотек важен именно botorch. Остальные можно взять любые совместимые. 
+
 # How to run
 Это как с нуля запустить
 ```python
@@ -10,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from tidyhebo import RealOptimizer
-from tidyhebo import RealP, CategoricalP, IntegerP, DiscreteRealP, BoolP
+from tidyhebo import RealP, CategoricalP, IntegerP, DiscreteRealP
 
 ## define parameter space
 params = [
@@ -30,8 +32,10 @@ params = [
 # x_init: GP_Tensor = SobolEngine(len(params)).draw(n_init, dtype=dtype)
 # x_init: DS_df = design_space.from_GP_to_DS(x_init, return_df=True)
 
-
+#* X requred to be pandas datafrme with columns in a right order.
+## columns order and names are specified by `params' (see above) by their index and name respectively.
 x_known = pd.read_csv("init_for_dbp.csv", index_col=0)
+# y required to be a 2d numpy array
 y_known = np.random.rand(8, 1)
 
 # create optimizer
@@ -41,18 +45,20 @@ optimizer = RealOptimizer(parameters=params,
 optimizer.use_brute_force = True
 
 # make a new suggestion about next point
-x_cand = optimizer.suggest()  # takes ~14 seconds
+x_cand = optimizer.suggest()  # took ~14 seconds for 6 params
 
 print(x_cand)
 
-# convert a suggestion into a dict
+# convert a suggestion into a dict if needed for convinient config usages
 x_cand_as_dict = x_cand.to_dict(orient="records")[0]
 
 print(x_cand_as_dict)
 ```
 Это как добавить новые наблюдения
 ```python
+# required to be a dataframe as `x_known`
 x_new = x_known.iloc[0].to_frame().T
+# required to be a 2d numpy array
 y_new = y_known[0, :]
 print(x_new)
 print(y_new)
