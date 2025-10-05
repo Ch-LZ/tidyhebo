@@ -5,10 +5,10 @@ build-backend = "hatchling.build"
 [project]
 name = "tidyhebo"
 version = "0.1.0"
-description = "Описание вашего пакета"  # FIXME: add a oneliner
+description = "bayesian optimization model"
 readme = {"file" = "README.md", "content-type" = "text/markdown"}
-license = "MIT" # FIXME: MIT/GPL or whatever, ask Denis. Now set to MIT, in order to build proj with hatch
-requires-python = ">=3.11" # WARN: Are you sure?
+license = "MIT"
+requires-python = ">=3.11"
 authors = [
     { name = "Lev Zhukov", email = "your.email@example.com" }, # FIXME: add your mail
 ]
