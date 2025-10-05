@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tidyhebo"
+version = "0.1.0"
+description = "bayesian optimization model"
+readme = {"file" = "README.md", "content-type" = "text/markdown"}
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Lev Zhukov", email = "your.email@example.com" }, # FIXME: add your mail
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Operating System :: OS Independent",
+]
+dependencies = [  # TODO: check & prune
+    "botorch==0.14.0",
+    "gpytorch~=1.14",
+    "numpy~=2.3.1",
+    "pandas~=2.3.1",
+    "pymoo~=0.6.1.5",
+    "torch~=2.7.1",
+]
+
+[project.urls]
+Source = "https://github.com/Ch-LZ/tidyhebo"
+
+[project.optional-dependencies]
+test = ["pytest"]
+# example = []
+dev = [
+    "tidyhebo[test]", # example
+    "matplotlib==3.3.4", # TODO: complete further
+]
+
+[tool.hatch.envs.dev]
+features = ["dev"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/tidyhebo",
+]
