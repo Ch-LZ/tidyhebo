@@ -9,10 +9,11 @@ from tidyhebo.common import dtype
 
 # region Real
 class RealParameter:
-    def __init__(self, index, lb, ub):
+    def __init__(self, index, lb, ub, name=None):
         self.index = index
         self.lb = lb
         self.ub = ub
+        self.name=name
 
 
 class RealDesignSpace:
@@ -121,6 +122,9 @@ from botorch.sampling.normal import SobolQMCNormalSampler
 from botorch.optim import optimize_acqf
 
 class qLogEIOptimizer:
+    """
+    Стереотипный сетап GP/EI без намеренно сделаный без трансформов но с численно-устойчивой acquisition function и достаточно большим количество семплов в Sobol sampler чтобы избежать численных проблем.
+    """
     def __init__(self, parameters: List[RealParameter], train_x=None, train_y=None):
         self.design_space: RealDesignSpace = RealDesignSpace(parameters)  # bounds, parameters
         dim = len(parameters)
@@ -129,9 +133,9 @@ class qLogEIOptimizer:
         self.train_x = self.design_space.to_opt_space(train_x)  # хранятся в пространстве оптимизатора
         self.train_y = train_y
         # model config
-        self.kernel = "Matern52_Gamma"
-        self.power_outcome = True
-        self.warp_input = True
+        self.kernel = "default"
+        self.power_outcome = False
+        self.warp_input = False
         self.state_dict = None
 
 
