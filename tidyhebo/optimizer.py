@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import torch
 from typing import List, overload
+from botorch.acquisition.objective import GenericMCObjective
 
 from .acquisition import HedgedPareto
 from .base_model import SimpleModel
@@ -9,13 +10,20 @@ from .common import dtype, device, DS_df, DS_Tensor, GA_Tensor, GP_Tensor
 from .design_space import MixedDesignSpace
 from .evolution_optimizer import optimize_real_hedged_acquisition, optimize_brute_force
 from .mixed_params import AbstractParameter
-
+from .yeo_johnson_warp import inv_yeo_johnson_transform
 
 class RealOptimizer:
-    def __init__(self, parameters: List[AbstractParameter], 
+    def __init__(self, parameters: List[AbstractParameter],
+                 y_scale: float, 
                  train_x: DS_df | DS_Tensor = None, 
                  train_y: torch.Tensor | np.ndarray = None,
                  _state_dict=None) -> None:
+        """
+        y_scale: flaot - a crude but constant estimate of largest y exexpected. 
+            For example, for yield should be 100%; for most valudation metrics should be 1.0. 
+            Is required to scale outcome to *approximately* [0, 1] (in abs units) for better numerical conditioning in Yeo-Johnson transformation.
+        """
+        self._y_scale = y_scale
         self._check_user_input(params=parameters, x=train_x, y=train_y)
         self.design_space: MixedDesignSpace = MixedDesignSpace(parameters)  # bounds, parameters
         if isinstance(train_x, pd.DataFrame):
@@ -29,7 +37,7 @@ class RealOptimizer:
         self._return_df: bool = isinstance(train_x, DS_df(pd.DataFrame))
 
         # model config
-        self.kernel = "Matern52_Gamma"
+        self.kernel = "Matern52"
         self.power_outcome: bool = True
         self.warp_input: bool = True
         self.refit_from_scratch: bool = False
@@ -37,6 +45,7 @@ class RealOptimizer:
         self.state_dict = _state_dict
 
         # acquisition function config
+        self.use_logei: bool = True
         self.beta: int = 4
         ## beta scheduling 
         self.use_beta_schedule: bool = False
@@ -52,7 +61,7 @@ class RealOptimizer:
     def suggest(self, return_all=False, _from_ds_points: DS_df | DS_Tensor=None) -> DS_df | DS_Tensor:
         model: SimpleModel = SimpleModel(
             train_x=self.design_space.from_GA_to_GP(self.train_x),
-            train_y=self.train_y,
+            train_y=self.train_y / self._y_scale,  # in scaled space
             kernel=self.kernel,
             power_outcome=self.power_outcome,
             warp_input=self.warp_input,
@@ -69,11 +78,21 @@ class RealOptimizer:
                            use_srinivas=self.use_srinivas, upscale=self.use_beta_upscaled)
         else:
             current_beta = self.beta
+
+        # objective to optimize acquisition functions in direct space if power_outcome is set        
+        objective = None
+        if self.power_outcome:
+            objective = GenericMCObjective(
+                lambda y, X: inv_yeo_johnson_transform(
+                    y, lam=model.model.outcome_warp_yj.lam).squeeze(-1))
+
         acqf = HedgedPareto(
             model=model.model,
-            best_f=self.train_y.max().item(),
+            best_f=self.train_y.max().item() / self._y_scale,  # in scaled space
             beta=current_beta,
             train_x=self.design_space.from_GA_to_GP(self.train_x),
+            objective=objective,
+            use_logei=self.use_logei,
         )
         # optimize acquisition function
         if self.use_brute_force or (_from_ds_points is not None):
