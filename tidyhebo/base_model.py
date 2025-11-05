@@ -19,7 +19,7 @@ class SimpleModel:
                  kernel,
                  power_outcome=True,
                  warp_input=True,
-                 _max_attempts=7,
+                 _max_attempts=10,
                  ):
         """
         kernel - which kind of kernel to use: "RBF" or "Matern52"

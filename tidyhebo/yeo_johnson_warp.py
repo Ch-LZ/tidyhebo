@@ -168,9 +168,18 @@ class YeoJohnsonGPytorch(GPytorchModule):
         """
         Term ot add to GP loss. A part of *positive* log-likelihood.
         Incorporates jacobian term and regularization term, requried for MAP estimation.
+
+        Note: should be calculated a *modulus* of Jacobian, but since YJ jacobian is always positive, the modulus is redundant
         """
-        sy_ = torch.sign(y0)
-        jacobian_term = sy_ * (self.lam - 1) * torch.log1p(sy_ * y0)
+        y_pos = y0.clamp_min(0.0)
+        y_neg = (-y0).clamp_min(0.0)
+
+        s_pos = torch.log1p(y_pos).sum()
+        s_neg = torch.log1p(y_neg).sum()
+
+        # jacobian_term = (self.lam - 1) * (s_pos - s_neg)
+        jacobian_term = self.lam * (s_pos - s_neg)
+
         return jacobian_term + self.regularization_term()
 
 

@@ -3,6 +3,7 @@ import pandas as pd
 import torch
 from typing import List, overload
 from botorch.acquisition.objective import GenericMCObjective
+from botorch.exceptions import ModelFittingError
 
 from .acquisition import HedgedPareto
 from .base_model import SimpleModel
@@ -59,6 +60,8 @@ class RealOptimizer:
 
 
     def suggest(self, return_all=False, _from_ds_points: DS_df | DS_Tensor=None) -> DS_df | DS_Tensor:
+        power_outcome_this_time = self.power_outcome
+
         model: SimpleModel = SimpleModel(
             train_x=self.design_space.from_GA_to_GP(self.train_x),
             train_y=self.train_y / self._y_scale,  # in scaled space
@@ -68,9 +71,17 @@ class RealOptimizer:
         )
         # train model
         state_dict = self.state_dict if not self.refit_from_scratch else None
-        model.train_model(state_dict=state_dict)
-        # save to future runs
-        self.state_dict = model.model.state_dict()
+        try:
+            model.train_model(state_dict=state_dict)  # might fail due to YJ transform, but is not expected to fail
+            # save to future runs
+            self.state_dict = model.model.state_dict()
+        except ModelFittingError as e:
+            with open("train_x.txt", "a") as f:
+                np.savetxt(f, self.train_x)
+            with open("train_y.txt", "a") as f:
+                np.savetxt(f, self.train_y)
+            raise e
+
         self.model = model
         # create hedged acquisition
         if self.use_beta_schedule:
@@ -81,7 +92,7 @@ class RealOptimizer:
 
         # objective to optimize acquisition functions in direct space if power_outcome is set        
         objective = None
-        if self.power_outcome:
+        if power_outcome_this_time:
             objective = GenericMCObjective(
                 lambda y, X: inv_yeo_johnson_transform(
                     y, lam=model.model.outcome_warp_yj.lam).squeeze(-1))
