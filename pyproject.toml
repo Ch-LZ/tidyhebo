@@ -7,7 +7,7 @@ name = "tidyhebo"
 version = "0.1.0"
 description = "bayesian optimization model"
 readme = {"file" = "README.md", "content-type" = "text/markdown"}
-license = "MIT"
+license = "CC-BY-NC 4.0"
 requires-python = ">=3.11"
 authors = [
     { name = "Lev Zhukov", email = "your.email@example.com" }, # FIXME: add your mail
