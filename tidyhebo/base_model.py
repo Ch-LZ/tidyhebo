@@ -19,6 +19,8 @@ class SimpleModel:
                  kernel,
                  power_outcome=True,
                  warp_input=True,
+                 shift_outcome=False,
+                 use_two_lambdas=False,
                  _max_attempts=10,
                  ):
         """
@@ -33,6 +35,8 @@ class SimpleModel:
         self.use_power_outcome_transform = power_outcome
         self.should_warp_input = warp_input
         self._max_attempts = _max_attempts
+        self.shift_outcome = shift_outcome
+        self.use_two_lambdas = use_two_lambdas
         # self._pick_best_of_all_attempts = _pick_best_of_all_attempts
 
         assert self.kernel_kind in ("RBF", "Matern52_Gamma", "Matern52", "default")
@@ -96,7 +100,10 @@ class SimpleModel:
 
         ## outcome transformation
         if self.use_power_outcome_transform:
-            outcome_warp_yj = YeoJohnsonGPytorch()  # with default prior
+            outcome_warp_yj = YeoJohnsonGPytorch(
+                use_shift=self.shift_outcome,
+                use_two_lambdas=self.use_two_lambdas,
+            )  # with default prior
             assert not hasattr(self.model, "outcome_warp_yj")
             self.model.outcome_warp_yj = outcome_warp_yj
 
@@ -106,7 +113,7 @@ class SimpleModel:
         self.mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
         # load state dict if any for faster convergence
         if state_dict:
-            self.model.load_state_dict(state_dict=state_dict)
+            load_state_dict_safe(model=self.model, state_dict=state_dict, silent=True)
 
         # fit model
         closure = None
@@ -135,3 +142,17 @@ class SimpleModel:
                 bounds=bounds,
             )
 
+
+def load_state_dict_safe(model: SingleTaskGP, state_dict, silent=True):
+    """
+    If model differs from the state dict, don't load it
+    This is useful in case of dinamic model building
+    """
+    model_keys = model.state_dict().keys()
+    st_d_keys = state_dict.keys()
+    if model_keys == st_d_keys:
+        model.load_state_dict(state_dict)
+    else:
+        if not silent:
+            print("State dict doesn't match")
+            assert False

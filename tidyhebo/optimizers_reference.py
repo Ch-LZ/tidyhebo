@@ -98,6 +98,7 @@ class OptunaOptimizer:
         self.parameters = parameters
         self.study = optuna.create_study(direction="maximize")
         self._prev_trial = None
+        self.train_y = train_y
 
     def suggest(self) -> torch.Tensor:
         trial = self.study.ask()
@@ -110,6 +111,7 @@ class OptunaOptimizer:
 
 
     def observe(self, x, y) -> None:
+        self.train_y = torch.cat([self.train_y, y], axis=0)
         y = y.reshape(-1).item()
         self.study.tell(self._prev_trial, y)
         self._prev_trial = None

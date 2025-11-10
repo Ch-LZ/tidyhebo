@@ -116,7 +116,7 @@ def inv_yeo_johnson_transform(y: torch.Tensor, lam: float, epsilon: float = 1e-1
 import torch
 
 from gpytorch import Module as GPytorchModule
-from gpytorch.priors import Prior, NormalPrior
+from gpytorch.priors import Prior, NormalPrior, LogNormalPrior
 from gpytorch.constraints import Interval
 
 
@@ -125,29 +125,70 @@ class YeoJohnsonGPytorch(GPytorchModule):
     A module for Yeo-Johnson learnable transformation
     """
     def __init__(self, 
-                 prior: Prior | None = NormalPrior(loc=1.0 + 1e-6, scale=0.5)):
+                 prior: Prior | None = NormalPrior(loc=1.0 + 1e-6, scale=0.5),
+                 use_shift=False,
+                 use_two_lambdas=False):
         super().__init__()
+        self.use_shift: bool = use_shift
+        self.use_two_lambdas: bool = use_two_lambdas
+
         self.register_parameter("lam", torch.nn.Parameter(torch.tensor(1.0 + 1e-6, dtype=torch.double)))
         if prior is not None:
             self.register_prior("lam_prior", prior, "lam")
+        self.register_constraint("lam", Interval(-1.0, 2.0))
 
-        self.register_constraint(
-            "lam", Interval(-1.0, 2.0)
-        )
+        if self.use_two_lambdas:
+            self.register_parameter("lam2", torch.nn.Parameter(torch.tensor(1.0 + 1e-6, dtype=torch.double)))
+            if prior is not None:
+                self.register_prior("lam2_prior", prior, "lam2")
+                self.register_constraint("lam2", Interval(-1.0, 2.0))
+
+        if self.use_shift:
+            self.register_parameter("center", torch.nn.Parameter(torch.tensor(0.0, dtype=torch.double)))
+            self.register_prior("center_prior", NormalPrior(0.0, 0.25), "center")
+            self.register_constraint("center", Interval(-0.05, 0.95))
+
 
     def forward(self, y):
         """
         *Here `y` strongly recommended to be scaled to *approximately* [0, 1] to improve numerical conditioning during optimization.
         """
-        return yeo_johnson_transform(y, lam=self.lam)
+        if self.use_shift:
+            y = y - self.center
+
+        if self.use_two_lambdas:
+            rv = torch.zeros_like(y)
+            pos_m = (y >= 0)
+            rv[pos_m] = yeo_johnson_transform(y[pos_m], lam=self.lam)
+            rv[~pos_m] = yeo_johnson_transform(y[~pos_m], lam=self.lam2)
+        else:
+            rv = yeo_johnson_transform(y, lam=self.lam)
+
+        return rv
+
+
+    def untransform(self, y_hat):
+        if self.use_two_lambdas:
+            rv = torch.zeros_like(y_hat)
+            pos_m = (y_hat >= 0)
+            rv[pos_m] = inv_yeo_johnson_transform(y_hat[pos_m], lam=self.lam)
+            rv[~pos_m] = inv_yeo_johnson_transform(y_hat[~pos_m], lam=self.lam2)
+        else:
+            rv = inv_yeo_johnson_transform(y_hat, lam=self.lam)
+
+        if self.use_shift:
+            rv = rv + self.center
+        return rv
 
 
     def _neg_log_like(self, y0):
         """
         Loss for YJ(y) ~ N(mu, sigma) likelihood
         DON'T use while training with GP simultaneously.
-        Mainly for testing purposes.
+        Mainly for testing purposes. 
         """
+        assert not self.use_two_lambdas
+
         if y0.ndim != 2:
             y0 = y0.unsqueeze(-1)
 
@@ -157,6 +198,7 @@ class YeoJohnsonGPytorch(GPytorchModule):
 
         log_var = torch.log(x_trans_var)
         loglike = -n_samples / 2 * log_var
+        # note: loss with one lambda and no shift
         loglike += (self.lam - 1) * (torch.sign(y0) * torch.log1p(torch.abs(y0))).sum()
 
         loglike += self.regularization_term()
@@ -178,15 +220,26 @@ class YeoJohnsonGPytorch(GPytorchModule):
         s_neg = torch.log1p(y_neg).sum()
 
         # jacobian_term = (self.lam - 1) * (s_pos - s_neg)
-        jacobian_term = self.lam * (s_pos - s_neg)
+        if self.use_two_lambdas:
+            jacobian_term = (self.lam - 1) * s_pos - (self.lam2 - 1) * s_neg
+        else:
+            jacobian_term = self.lam * (s_pos - s_neg)
 
         return jacobian_term + self.regularization_term()
 
 
     def regularization_term(self):
         rv = 0.0
+
         if hasattr(self, "lam_prior"):
-            rv = self.lam_prior.log_prob(self.lam)
+            rv = rv + self.lam_prior.log_prob(self.lam)
+
+        if hasattr(self, "lam2_prior"):
+            rv = rv + self.lam_prior.log_prob(self.lam)
+
+        if hasattr(self, "center_prior"):
+            rv = rv + self.center_prior.log_prob(self.center)
+
         return rv
 
 
