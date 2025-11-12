@@ -41,7 +41,6 @@ y_known = np.random.rand(8, 1)
 optimizer = RealOptimizer(parameters=params,
                           train_x=x_known,
                           train_y=y_known)
-optimizer.use_brute_force = True
 
 # make a new suggestion about next point
 x_cand = optimizer.suggest()  # took ~14 seconds for 6 params

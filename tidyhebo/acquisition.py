@@ -2,7 +2,8 @@ import torch
 
 from botorch.acquisition import (
     AcquisitionFunction,
-    qLogNoisyExpectedImprovement, 
+    qLogNoisyExpectedImprovement,
+    qLogExpectedImprovement,
     qProbabilityOfImprovement,
     qUpperConfidenceBound
     )
@@ -23,16 +24,21 @@ class HedgedPareto(AcquisitionFunction):
         best_f: float,
         beta: float,
         train_x: GP_Tensor,
+        use_logei=False,  # use qLogEI instead of qLogNEI. qLogNEI just harder to calculate imho.
+        objective=None,
     ):
         super().__init__(model)
         self.model = model
 
         # Use MC for better numeric stability and robustness.
-        samplint_size = 512 * 4 * 2
+        sampl_int_size = int(512 * 4 * 2 * 2.5)
         # разные семплеры - обязательны. Обратное - вызывает ошибку в qLogNoisyExpectedImprovement
-        self.qLogNEI = qLogNoisyExpectedImprovement(model, X_baseline=train_x, sampler=SobolQMCNormalSampler(sample_shape=torch.Size([samplint_size])))
-        self.qPI = qProbabilityOfImprovement(model, best_f=best_f, sampler=SobolQMCNormalSampler(sample_shape=torch.Size([samplint_size])))
-        self.q_UCB = qUpperConfidenceBound(model, beta=beta, sampler=SobolQMCNormalSampler(sample_shape=torch.Size([samplint_size])))
+        if not use_logei:
+            self.qLogNEI = qLogNoisyExpectedImprovement(model, X_baseline=train_x, sampler=SobolQMCNormalSampler(sample_shape=torch.Size([sampl_int_size])), objective=objective)
+        else:
+            self.qLogNEI = qLogExpectedImprovement(model, best_f=best_f, sampler=SobolQMCNormalSampler(sample_shape=torch.Size([sampl_int_size])), objective=objective)
+        self.qPI = qProbabilityOfImprovement(model, best_f=best_f, sampler=SobolQMCNormalSampler(sample_shape=torch.Size([sampl_int_size])), objective=objective)
+        self.q_UCB = qUpperConfidenceBound(model, beta=beta, sampler=SobolQMCNormalSampler(sample_shape=torch.Size([sampl_int_size])), objective=objective)
         self.n_obj: int = 3
 
 
