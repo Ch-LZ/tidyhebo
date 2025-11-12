@@ -122,28 +122,28 @@ def test_optimizer_creation():
 
     # empty y
     with pytest.raises(AssertionError):
-        RealOptimizer(parameters=[cp,], train_x=df, train_y=y[:0], y_scale=1.0)
+        RealOptimizer(parameters=[cp,], train_x=df, train_y=y[:0])
 
     # empty x
     with pytest.raises(AssertionError):
-        RealOptimizer(parameters=[cp,], train_x=df.iloc[:0, :], train_y=y, y_scale=1.0)
+        RealOptimizer(parameters=[cp,], train_x=df.iloc[:0, :], train_y=y)
 
     # number of samples mismatch
     with pytest.raises(AssertionError):
-        RealOptimizer(parameters=[cp,], train_x=df, train_y=y[:-2], y_scale=1.0)
+        RealOptimizer(parameters=[cp,], train_x=df, train_y=y[:-2])
 
     # wrong type of y
     with pytest.raises(AssertionError):
-        RealOptimizer(parameters=[cp,], train_x=df, train_y=torch.from_numpy(y), y_scale=1.0)
+        RealOptimizer(parameters=[cp,], train_x=df, train_y=torch.from_numpy(y))
     
     # wrong shape of y
     with pytest.raises(AssertionError):
-        RealOptimizer(parameters=[cp,], train_x=df, train_y=y.reshape(-1, 1, 1), y_scale=1.0)
+        RealOptimizer(parameters=[cp,], train_x=df, train_y=y.reshape(-1, 1, 1))
 
     # missmatch column names
     cp2 = CategoricalP(1, ['cat', 'mouse', 'dog'])
     with pytest.raises(AssertionError):
-        RealOptimizer(parameters=[cp2,], train_x=df, train_y=y, y_scale=1.0)
+        RealOptimizer(parameters=[cp2,], train_x=df, train_y=y)
 
 
 def test_optimizer_observe():
@@ -152,7 +152,7 @@ def test_optimizer_observe():
     df: pd.DataFrame = pd.Series(["cat", "cat", "dog", "mouse"]).to_frame(name="x0")
     y = np.array([0, 1, 1, 0])
 
-    optimizer = RealOptimizer(parameters=[cp,], train_x=df, train_y=y, y_scale=1.0)
+    optimizer = RealOptimizer(parameters=[cp,], train_x=df, train_y=y)
     # empty y
     with pytest.raises(AssertionError):
         optimizer.observe(df, y[:0])
@@ -204,7 +204,7 @@ def test_order_params():
     train_y = np.array([0, 0, 1, 1]).reshape(-1, 1)
 
     reordered_df = df.copy()[["x4", "x3", "x2", "x1", "x0"]] 
-    optimizer = RealOptimizer(params, train_x=reordered_df, train_y=train_y, y_scale=1.0)
+    optimizer = RealOptimizer(params, train_x=reordered_df, train_y=train_y)
 
     # test if parameters are ordered correctly
     df_recovered = optimizer.design_space.from_GA_to_DS(optimizer.train_x, return_df=True)
