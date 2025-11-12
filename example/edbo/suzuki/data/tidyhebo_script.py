@@ -1,5 +1,6 @@
 from tidyhebo.acquisition import HedgedPareto
 from tidyhebo.base_model import SimpleModel
+from tidyhebo.optimizer import train_model
 from botorch.utils.multi_objective.pareto import is_non_dominated
 import torch
 import numpy as np
@@ -21,23 +22,12 @@ def test_edbo(n_total):
     x_all_new = pd.concat([df.drop(columns="yield"), x_historical]).drop_duplicates(keep=False)
     y_historical = y0.reshape(-1, 1)
 
-    _state_dict = None
     for _ in tqdm.tqdm(range(n_total-n_init), total=n_total, initial=n_init):
         # get model
-        model = SimpleModel(train_x=torch.from_numpy(x_historical.to_numpy()),
-                            train_y=torch.from_numpy(y_historical).reshape(-1, 1),
-                            kernel="Matern52"
-                            )
-
-        model.train_model(state_dict=_state_dict)
-        _state_dict = model.model.state_dict()
-
-        # calculate acquisition
-        acqf = HedgedPareto(model=model.model,
-                            best_f=torch.from_numpy(y_historical).max().item(),
-                            beta=4,
-                            train_x=torch.from_numpy(x_historical.to_numpy()),
-                            )
+        _, acqf = train_model(
+            train_x=torch.from_numpy(x_historical.to_numpy()),
+            train_y=torch.from_numpy(y_historical).reshape(-1, 1)
+        )
 
         x_all_new_torch = torch.from_numpy(x_all_new.to_numpy())
         with torch.no_grad():
@@ -62,14 +52,14 @@ if __name__ == '__main__':
     from datetime import datetime
 
     # import tqdm 
-    all_edbo_res = []
+    # all_edbo_res = []
     n_repeats = 50
     n_trials = 100
     for i in range(n_repeats):
         print()
         print(f"iter: {i} time: {datetime.now()}")
-        all_edbo_res.append(test_edbo(n_trials).T)
+        current_res = test_edbo(n_trials).T
+        # all_edbo_res.append(current_res)
 
-    tidyhebo_edbo_res = np.vstack(all_edbo_res)
-
-    np.savetxt("edbo_suzuki_features_matern52_dimscaled.txt", tidyhebo_edbo_res)
+        with open("edbo_features_tidyhebo.txt", "a") as f:
+            np.savetxt(f, current_res)
