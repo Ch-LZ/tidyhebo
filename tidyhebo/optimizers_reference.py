@@ -9,11 +9,10 @@ from tidyhebo.common import dtype
 
 # region Real
 class RealParameter:
-    def __init__(self, index, lb, ub, name=None):
+    def __init__(self, index, lb, ub):
         self.index = index
         self.lb = lb
         self.ub = ub
-        self.name=name
 
 
 class RealDesignSpace:
@@ -98,7 +97,6 @@ class OptunaOptimizer:
         self.parameters = parameters
         self.study = optuna.create_study(direction="maximize")
         self._prev_trial = None
-        self.train_y = train_y
 
     def suggest(self) -> torch.Tensor:
         trial = self.study.ask()
@@ -111,7 +109,6 @@ class OptunaOptimizer:
 
 
     def observe(self, x, y) -> None:
-        self.train_y = torch.cat([self.train_y, y], axis=0)
         y = y.reshape(-1).item()
         self.study.tell(self._prev_trial, y)
         self._prev_trial = None
@@ -124,9 +121,6 @@ from botorch.sampling.normal import SobolQMCNormalSampler
 from botorch.optim import optimize_acqf
 
 class qLogEIOptimizer:
-    """
-    Стереотипный сетап GP/EI без намеренно сделаный без трансформов но с численно-устойчивой acquisition function и достаточно большим количество семплов в Sobol sampler чтобы избежать численных проблем.
-    """
     def __init__(self, parameters: List[RealParameter], train_x=None, train_y=None):
         self.design_space: RealDesignSpace = RealDesignSpace(parameters)  # bounds, parameters
         dim = len(parameters)
@@ -135,9 +129,9 @@ class qLogEIOptimizer:
         self.train_x = self.design_space.to_opt_space(train_x)  # хранятся в пространстве оптимизатора
         self.train_y = train_y
         # model config
-        self.kernel = "default"
-        self.power_outcome = False
-        self.warp_input = False
+        self.kernel = "Matern52_Gamma"
+        self.power_outcome = True
+        self.warp_input = True
         self.state_dict = None
 
 
@@ -245,153 +239,6 @@ class GibbonOptimizer:
         self.train_x = torch.cat([self.train_x, x], axis=0)
         self.train_y = torch.cat([self.train_y, y], axis=0)
 
-# region models
-import torch
+# todo TuRBO
 
-from botorch import fit_gpytorch_mll
-from botorch.models import SingleTaskGP
-from gpytorch.mlls import ExactMarginalLogLikelihood
-from botorch.models.transforms.input import Warp
-from gpytorch.priors.torch_priors import LogNormalPrior
-
-from .common import dtype, device, GP_Tensor
-from .yeo_johnson_warp import get_closure, YeoJohnsonGPytorch
-
-
-class YJModel:
-    def __init__(self, 
-                 train_x: GP_Tensor,
-                 train_y,
-                 use_input_warp=False):
-        self.model: SingleTaskGP = None
-        self.train_y = train_y
-        self.train_x = train_x
-        self.mll = None
-
-        self.outcome_transform = None
-
-        n_x = self.train_x.shape[1]
-        self.bounds = torch.repeat_interleave(
-            torch.tensor([[0,1],], device=device, dtype=dtype), n_x, dim=0).T
-        
-        self.use_input_warp = use_input_warp
-    
-
-    def train_model(self, state_dict=None):
-
-        input_warp = None
-        if self.use_input_warp:
-            input_warp = Warp(  # уже содержит внутри kumaraswamy преобразование (и нормализацию)
-                d=self.train_x.shape[-1],
-                indices=list(range(self.train_x.shape[-1])),
-                # use a prior with median at 1.
-                # when a=1 and b=1, the Kumaraswamy CDF is the identity function
-                concentration1_prior=LogNormalPrior(0.0, 0.75**0.5),
-                concentration0_prior=LogNormalPrior(0.0, 0.75**0.5),
-                bounds=self.bounds,
-            )
-
-        self.model = SingleTaskGP(
-            train_X=self.train_x,
-            train_Y=self.train_y,
-            input_transform=input_warp,
-        ).to(self.train_x)
-        
-        self.outcome_transform = YeoJohnsonGPytorch()
-        self.model.outcome_warp = self.outcome_transform  # нужно положить его как поле, чтобы потом он был найден в computational графе
-
-        self.mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-
-        if state_dict:
-            self.model.load_state_dict(state_dict=state_dict)
-        
-        fit_gpytorch_mll(self.mll, 
-                    closure=get_closure(self.mll, self.model.outcome_warp),
-                            max_attempts=10,   # at this momemt the model fails to optimize unexpectedly.
-                            )
-
-
-class SepYJModel:
-    def __init__(self,
-                 train_x: GP_Tensor,
-                 train_y):
-        
-        self.model: SingleTaskGP = None
-        self.train_y = train_y
-        self.train_x = train_x
-        self.mll = None
-
-        self.outcome_transform = None
-    
-        n_x = self.train_x.shape[1]
-        self.bounds = torch.repeat_interleave(
-            torch.tensor([[0,1],], device=device, dtype=dtype), n_x, dim=0).T
-
-
-    def train_model(self, state_dict=None):
-        self.outcome_transform = YeoJohnsonGPytorch()
-        self.outcome_transform._optimize(self.train_y)
-    
-        with torch.no_grad():
-            y_transformed = self.outcome_transform(self.train_y)
-
-        self.model = SingleTaskGP(
-            train_X=self.train_x,
-            train_Y=y_transformed,
-        ).to(self.train_x)
-
-        self.mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-
-        if state_dict:
-            self.model.load_state_dict(state_dict=state_dict)
-        
-        fit_gpytorch_mll(self.mll)
-
-
-class SepYJKumModel:
-    def __init__(self,
-                 train_x: GP_Tensor,
-                 train_y):
-        
-        self.model: SingleTaskGP = None
-        self.train_y = train_y
-        self.train_x = train_x
-        self.mll = None
-
-        self.outcome_transform = None
-    
-        n_x = self.train_x.shape[1]
-        self.bounds = torch.repeat_interleave(
-            torch.tensor([[0,1],], device=device, dtype=dtype), n_x, dim=0).T
-
-
-    def train_model(self, state_dict=None):
-        self.outcome_transform = YeoJohnsonGPytorch()
-        self.outcome_transform._optimize(self.train_y)
-
-        input_warp = Warp(  # уже содержит внутри kumaraswamy преобразование (и нормализацию)
-                d=self.train_x.shape[-1],
-                indices=list(range(self.train_x.shape[-1])),
-                # use a prior with median at 1.
-                # when a=1 and b=1, the Kumaraswamy CDF is the identity function
-                concentration1_prior=LogNormalPrior(0.0, 0.75**0.5),
-                concentration0_prior=LogNormalPrior(0.0, 0.75**0.5),
-                bounds=self.bounds,
-            )
-
-        with torch.no_grad():
-            y_transformed = self.outcome_transform(self.train_y)
-
-        self.model = SingleTaskGP(
-            train_X=self.train_x,
-            train_Y=y_transformed,
-            input_transform=input_warp,
-        ).to(self.train_x)
-
-        self.mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
-
-        if state_dict:
-            self.model.load_state_dict(state_dict=state_dict)
-        
-        fit_gpytorch_mll(self.mll)
-# endregion
+# todo RayTune (vanilla HEBO)

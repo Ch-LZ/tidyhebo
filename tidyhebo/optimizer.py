@@ -1,8 +1,7 @@
 import numpy as np
 import pandas as pd
 import torch
-from typing import List
-from botorch.acquisition.objective import GenericMCObjective
+from typing import List, overload
 
 from .acquisition import HedgedPareto
 from .base_model import SimpleModel
@@ -10,16 +9,13 @@ from .common import dtype, device, DS_df, DS_Tensor, GA_Tensor, GP_Tensor
 from .design_space import MixedDesignSpace
 from .evolution_optimizer import optimize_real_hedged_acquisition, optimize_brute_force
 from .mixed_params import AbstractParameter
-from .yeo_johnson_warp import inv_yeo_johnson_transform
 
 
 class RealOptimizer:
-    def __init__(self, parameters: List[AbstractParameter],
+    def __init__(self, parameters: List[AbstractParameter], 
                  train_x: DS_df | DS_Tensor = None, 
                  train_y: torch.Tensor | np.ndarray = None,
                  _state_dict=None) -> None:
-
-        self._y_scale = 1.0
         self._check_user_input(params=parameters, x=train_x, y=train_y)
         self.design_space: MixedDesignSpace = MixedDesignSpace(parameters)  # bounds, parameters
         if isinstance(train_x, pd.DataFrame):
@@ -33,20 +29,19 @@ class RealOptimizer:
         self._return_df: bool = isinstance(train_x, DS_df(pd.DataFrame))
 
         # model config
-        self.kernel = "Matern52"
+        self.kernel = "Matern52_Gamma"
         self.power_outcome: bool = True
-        self.shift_outcome: bool = False    # was never better with it
-        self.use_two_lambdas: bool = False  # was never better with it
-        self._use_gate: bool = True
-
         self.warp_input: bool = True
         self.refit_from_scratch: bool = False
-        self.model = None
+        self.model = None  # save for inference
         self.state_dict = _state_dict
 
         # acquisition function config
-        self.use_logei: bool = True
         self.beta: int = 4
+        ## beta scheduling 
+        self.use_beta_schedule: bool = False
+        self.use_srinivas: bool = False
+        self.use_beta_upscaled: bool = False
 
         # GA config
         self.use_brute_force: bool = False
@@ -55,59 +50,30 @@ class RealOptimizer:
 
 
     def suggest(self, return_all=False, _from_ds_points: DS_df | DS_Tensor=None) -> DS_df | DS_Tensor:
-        # select a model based on criterion
-        power_outcome_this_time = self.power_outcome
-        try:
-            self._y_scale = self.train_y.max().item() - self.train_y.min().item()
-            _std0 = (self.train_y / self._y_scale).std()
-            self._y_scale = self._y_scale * _std0
-
-            model: SimpleModel = SimpleModel(
-                train_x=self.design_space.from_GA_to_GP(self.train_x),
-                train_y=self.train_y / self._y_scale,  # in scaled space
-                kernel=self.kernel,
-                warp_input=self.warp_input,
-                power_outcome=self.power_outcome,
-                shift_outcome=self.shift_outcome,
-                use_two_lambdas=self.use_two_lambdas,
-            )
-            model.train_model(state_dict=self.state_dict)
-
-            # evaluate the criterion
-            if self._use_gate:
-                with torch.no_grad():
-                    y_tr = model.outcome_warp_yj.forward(self.train_y / self._y_scale)
-                    assert y_tr.std().item() >= 0.5  # else retry
-        except:
-            power_outcome_this_time = False
-            self._y_scale = 1.0
-
-            model: SimpleModel = SimpleModel(
-                train_x=self.design_space.from_GA_to_GP(self.train_x),
-                train_y=self.train_y / self._y_scale,  # in scaled space
-                kernel=self.kernel,
-                power_outcome=power_outcome_this_time,
-                warp_input=self.warp_input,
-            )
-            model.train_model(state_dict=self.state_dict)
-
+        model: SimpleModel = SimpleModel(
+            train_x=self.design_space.from_GA_to_GP(self.train_x),
+            train_y=self.train_y,
+            kernel=self.kernel,
+            power_outcome=self.power_outcome,
+            warp_input=self.warp_input,
+        )
+        # train model
+        state_dict = self.state_dict if not self.refit_from_scratch else None
+        model.train_model(state_dict=state_dict)
+        # save to future runs
+        self.state_dict = model.model.state_dict()
         self.model = model
-        self.state_dict = self.model.model.state_dict() if not self.refit_from_scratch else None
-        # self.state_dict = None
-
-        # objective to optimize acquisition functions in direct space if power_outcome is set        
-        objective = None
-        if power_outcome_this_time:
-            objective = GenericMCObjective(
-                lambda y, X: model.model.outcome_warp_yj.untransform(y).squeeze(-1))
-
+        # create hedged acquisition
+        if self.use_beta_schedule:
+            current_beta = _schedule_beta(iter=self.train_x.shape[-1] + 1, dim=self.dim,
+                           use_srinivas=self.use_srinivas, upscale=self.use_beta_upscaled)
+        else:
+            current_beta = self.beta
         acqf = HedgedPareto(
             model=model.model,
-            best_f=self.train_y.max().item() / self._y_scale,  # in scaled space
-            beta=self.beta,
+            best_f=self.train_y.max().item(),
+            beta=current_beta,
             train_x=self.design_space.from_GA_to_GP(self.train_x),
-            objective=objective,
-            use_logei=self.use_logei,
         )
         # optimize acquisition function
         if self.use_brute_force or (_from_ds_points is not None):
@@ -173,61 +139,17 @@ class RealOptimizer:
             assert x.columns.is_unique, "Column names should be unique"
 
 
-#todo: пофиксить эту функцию или вообще убрать за ненадобностью
-def train_model(
-        train_x,
-        train_y,
-        kernel="Matern52",
-        warp_input=True,
-        power_outcome=True,
-        use_logei=True,
-        beta=4,
-):
-    power_outcome_this_time = power_outcome
-    _y_scale = None
-    try:
-        _y_scale = train_y.max().item() - train_y.min().item()
-        _std0 = (train_y / _y_scale).std()
-        _y_scale = _y_scale * _std0
+def _schedule_beta(iter, dim, use_srinivas=False, upscale=False):
+    if use_srinivas:
+        dim = 6
+        delta = 0.01
+        beta = 2 * ((2 + 2*dim) * np.log(iter) + np.log((2*np.pi**2) / (2 * delta)))
+    else:
+        delta = 0.01
+        upsi = 0.5
+        # формула из кода HEBO, на практике растет разумно.
+        beta = upsi * 2 * ((2.0 + dim / 2.0) * np.log(iter) + np.log(3 * np.pi**2 / (3 * delta)))
 
-        model: SimpleModel = SimpleModel(
-            train_x=train_x,
-            train_y=train_y / _y_scale,  # in scaled space
-            kernel=kernel,
-            power_outcome=power_outcome,
-            warp_input=warp_input,
-        )
-        model.train_model(state_dict=None)  # restart from scratch every time
-
-        # criterion
-        with torch.no_grad():
-            y_tr = model.outcome_warp_yj.forward(train_y / _y_scale)
-            assert y_tr.std().item() >= 0.5  # else retry
-    except:
-        power_outcome_this_time = False
-        _y_scale = 1.0
-
-        model: SimpleModel = SimpleModel(
-            train_x=train_x,
-            train_y=train_y / _y_scale,  # in scaled space
-            kernel=kernel,
-            power_outcome=power_outcome,
-            warp_input=warp_input
-        )
-        model.train_model(state_dict=None)  # restart from scratch every time
-
-    objective = None
-    if power_outcome_this_time:
-        objective = GenericMCObjective(
-            lambda y, X: inv_yeo_johnson_transform(
-                y, lam=model.model.outcome_warp_yj.lam).squeeze(-1))
-
-    acqf = HedgedPareto(
-        model=model.model,
-        best_f=train_y.max().item() / _y_scale,  # in scaled space
-        beta=beta,
-        train_x=train_x,
-        objective=objective,
-        use_logei=use_logei,
-    )
-    return model, acqf
+    if upscale:
+        beta = beta * 2 / np.pi
+    return beta
