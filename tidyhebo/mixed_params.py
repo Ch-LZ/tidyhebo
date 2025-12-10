@@ -53,11 +53,10 @@ class AbstractParameter(ABC):
 
 
 class RealParam(AbstractParameter):  # abstract
-    def __init__(self, index: int, ub: float, lb: float, tol: Optional[float]=None, name: Optional[str]=None) -> None:
+    def __init__(self, index: int, ub: float, lb: float, name: Optional[str]=None) -> None:
         super().__init__(index=index, name=name)
         self.ga_lb = lb  # in GA space
         self.ga_ub = ub  # in GA space
-        self.ga_tol = tol or abs(ub - lb) * 1e-8
 
     #* GA <-> GP
     def from_GA_to_GP(self, X: GA_Tensor) -> GP_Tensor:
@@ -69,12 +68,12 @@ class RealParam(AbstractParameter):  # abstract
 
 class RealP(RealParam):
     def __init__(self, index: int, lb: float, ub: float, *, ds_tolerance: Optional[float]=None, name: Optional[str]=None) -> None:
-        # simple checks
         self.ds_lb = lb
         self.ds_ub = ub
 
         ga_tolerance = ds_tolerance / (ub - lb) if ds_tolerance else 1e-6
-        super().__init__(index=index, lb=0, ub=1, tol=ga_tolerance, name=name)
+        super().__init__(index=index, lb=0, ub=1, name=name)
+        self.ga_tol = ga_tolerance or abs(self.ga_ub - self.ga_lb) * 1e-8
 
     #* DS <-> GA
     def from_DS_to_GA(self, X: DS_Tensor) -> GA_Tensor:
@@ -82,6 +81,34 @@ class RealP(RealParam):
 
     def from_GA_to_DS(self, X: GA_Tensor) -> DS_Tensor:
         return X * (self.ds_ub - self.ds_lb) + self.ds_lb
+
+    @cached_property
+    def pymoo_var(self) -> pmv.BoundedVariable:
+        # borders in GA space
+        return pmv.Real(bounds=(self.ga_lb, self.ga_ub))
+
+
+class RealPowP(RealParam):
+    def __init__(self, index: int, lb: float, ub: float, base: float = 10, *, name: Optional[str]=None) -> None:
+        assert lb > 0
+        self.ds_lb = lb
+        self.ds_ub = ub
+        self.base = base
+
+        self._lub = math.log(ub, base)
+        self._llb = math.log(lb, base)
+        self._lbase = math.log(self.base)
+
+        super().__init__(index=index, lb=0, ub=1,name=name)
+
+    #* DS <-> GA
+    def from_DS_to_GA(self, X: DS_Tensor) -> GA_Tensor:
+        X_tr = X.log() / self._lbase
+        return (X_tr - self._llb) / (self._lub - self._llb)
+
+    def from_GA_to_DS(self, X: GA_Tensor) -> DS_Tensor:
+        X_tr = X * (self._lub - self._llb) + self._llb
+        return (X_tr * self._lbase).exp()
 
     @cached_property
     def pymoo_var(self) -> pmv.BoundedVariable:

@@ -6,7 +6,7 @@ from functools import cached_property
 from typing import List, Iterator
 
 from .common import dtype, device, DS_df, DS_Tensor, GA_Tensor, GP_Tensor
-from .mixed_params import AbstractParameter, DiscreteParam, RealParam, CategoricalP, IntegerP, BoolP, RealP, DiscreteRealP
+from .mixed_params import AbstractParameter, DiscreteParam, RealParam, CategoricalP, IntegerP, BoolP, RealP, DiscreteRealP, RealPowP
 
 
 # region MixedDesign
@@ -16,6 +16,8 @@ class MixedDesignSpace:
     def __init__(self, parameters: List[AbstractParameter]):
         # проверка, что параметры идут в порядке индексов.
         assert (np.array([p.index for p in parameters]) == np.arange(len(parameters))).all(), "Params should be provided in sorted index order"
+        # проверка что все параметры называются по-разному
+        assert len(set([p.name for p in parameters])) == len(parameters), "All parameters should be provided with unique names."
         self.params: List[AbstractParameter] = parameters
 
         self.ordered_params: List[str] = [p.name for p in parameters]
@@ -64,7 +66,7 @@ class MixedDesignSpace:
                 elif isinstance(p, BoolP):
                     x[p.name] = x[p.name].astype(bool)
                 else:
-                    assert isinstance(p, (RealP, DiscreteRealP))
+                    assert isinstance(p, (RealP, DiscreteRealP, RealPowP))
 
             x: DS_df 
         return x
@@ -120,8 +122,6 @@ class MixedDesignSpace:
             for p in self._categorical_params:
                 p._convert_here = not value
             self._map_categories_here = value
-        # print(f"_map_categories_here = {self._map_categories_here}")
-        # print(f"categories_are_numeric = {[p._convert_here for p in self._categorical_params]}")
 
 
     @cached_property

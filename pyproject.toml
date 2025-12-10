@@ -7,8 +7,9 @@ name = "tidyhebo"
 version = "0.1.0"
 description = "bayesian optimization model"
 readme = {"file" = "README.md", "content-type" = "text/markdown"}
-license = "MIT"
-requires-python = ">=3.11"
+license = "CC-BY-NC-4.0"
+license-files = ["LICENSE.md"]
+requires-python = ">=3.10"  # because of botorch
 authors = [
     { name = "Lev Zhukov", email = "your.email@example.com" }, # FIXME: add your mail
 ]
@@ -22,12 +23,10 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [  # TODO: check & prune
-    "botorch==0.14.0",
-    "gpytorch~=1.14",
-    "numpy~=2.3.1",
-    "pandas~=2.3.1",
-    "pymoo~=0.6.1.5",
-    "torch~=2.7.1",
+    "numpy",  # installed before `pymoo` for better performance 
+    "botorch>=0.14",
+    "pymoo",
+    "pandas",
 ]
 
 [project.urls]
@@ -39,6 +38,21 @@ test = ["pytest"]
 dev = [
     "tidyhebo[test]", # example
     "matplotlib==3.3.4", # TODO: complete further
+]
+
+# to reliably reproduce results is needed
+lock = [
+    # "python==3.11",
+
+    "botorch~=0.14",
+    "gpytorch~=1.14",
+    "numpy~=2.3.1",
+    "pandas~=2.3.1",
+    "pymoo~=0.6.1.5",
+    "torch~=2.7.1",
+
+    "matplotlib==3.3.4",
+    "pytest~=8.4",
 ]
 
 [tool.hatch.envs.dev]
