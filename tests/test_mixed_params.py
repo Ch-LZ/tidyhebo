@@ -4,7 +4,8 @@ from pytest import approx
 import pymoo.core.variable as pmv
 
 from tidyhebo.mixed_params import (RealP, BoolP, DiscreteRealP, 
-                                     CategoricalP, IntegerP, AbstractParameter)
+                                CategoricalP, IntegerP, RealPowP,
+                                AbstractParameter)
 
 
 def test_realp():
@@ -131,3 +132,26 @@ def test_tolerance():
     rp = RealP(0, 1., 3.)
     # assert rp.ga_tol == (3 - 1) / 100
     assert rp.ga_tol == 1e-6
+
+
+def test_realpowp():
+    rpp = RealPowP(0, 1, 1000, 10)
+
+    assert rpp.index == 0
+    assert rpp.name == "x0"
+    assert rpp.ga_lb == 0.0
+    assert rpp.ga_ub == 1.0
+    assert rpp._llb == approx(0.0)
+    assert rpp._lub == approx(3.0)
+
+    assert isinstance(rpp.pymoo_var, pmv.Real)
+
+    x_ds = torch.tensor([1.0, 10., 100.])
+    x_ga = torch.tensor([0.0, 1., 2.]) / 3.
+    x_gp = x_ga.clone()
+
+    assert torch.all(rpp.from_DS_to_GA(x_ds) == x_ga)
+    assert rpp.from_GA_to_DS(x_ga) == approx(x_ds)
+
+    assert torch.all(rpp.from_GA_to_GP(x_ga) == x_gp)
+    assert torch.all(rpp.from_GP_to_GA(x_gp) == x_ga)

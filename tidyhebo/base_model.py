@@ -1,34 +1,42 @@
 import torch
 
-from abc import ABC
 from botorch import fit_gpytorch_mll
+from botorch.models import SingleTaskGP
 from botorch.models.gpytorch import BatchedMultiOutputGPyTorchModel
+from botorch.models.transforms.input import Warp
 from botorch.models.utils import gpytorch_modules
-from botorch.models import SingleTaskGP, MixedSingleTaskGP
 from gpytorch.mlls import ExactMarginalLogLikelihood
+from gpytorch.priors.torch_priors import LogNormalPrior
 
 from .common import dtype, device, GP_Tensor
+from .yeo_johnson_warp import YeoJohnsonGPytorch, YJWarpedExactMLL
 
 
-class SimpleModel(ABC):
+class SimpleModel:
     def __init__(self,
                  train_x: GP_Tensor,
                  train_y,
                  kernel,
                  power_outcome=True,
+                 use_gate=True,
                  warp_input=True,
+                 _best_train=False,
+                 _max_attempts=10,
                  ):
         """
         kernel - which kind of kernel to use: "RBF" or "Matern52"
-        Работает в (0, 1) - нормализованом пространстве
+        Works for x in (0, 1) - normalized space
         """
-        self.model: SingleTaskGP | MixedSingleTaskGP = None
+        self.model: SingleTaskGP = None
         self.train_y = train_y
         self.train_x: GP_Tensor = train_x
         self.mll = None
         self.kernel_kind = kernel
         self.use_power_outcome_transform = power_outcome
+        self.use_gate = use_gate
         self.should_warp_input = warp_input
+        self._max_attempts = _max_attempts
+        self._best_train = _best_train
 
         assert self.kernel_kind in ("RBF", "Matern52_Gamma", "Matern52", "default")
 
@@ -51,7 +59,6 @@ class SimpleModel(ABC):
 
         В работе показывают, что обычный сетап байесовской оптимизации (GP). При правильном прайоре работает не хуже, чем более сложные многосоставные модели
         """
-        # assert kind in ("RBF", "Matern52_Gamma", "Matern52")
         arg_num = train_x.shape[-1]
         _, _aug_batch_shape = BatchedMultiOutputGPyTorchModel.get_batch_dimensions(train_x, train_y)
         match kind:
@@ -74,63 +81,57 @@ class SimpleModel(ABC):
 
 
     def train_model(self, state_dict=None):
-        # data transformations
-        ## outome transform
-        #* трансформ y написан именно таким образом для оптимизации. Потому что в "трансформированном" пространстве оптимизация проходит заметно лучше. 
-        #* Если использовать обратное преобразование и дельта-метод для variance, то результат сразу сходится сильно хуже.
-        y_to_train = (self._output_transformation(self.train_y) 
-                      if self.use_power_outcome_transform else self.train_y)
+        self._train_model_inner(state_dict=state_dict)
+
+        if self.use_gate:
+            if self.model.train_targets.std() < 0.5:
+                self.use_power_outcome_transform = False
+                self._train_model_inner(state_dict=state_dict)
+
+
+    def _train_model_inner(self, state_dict=None):
+        # building a model
+        ## input transform
         input_transform = (self._get_kumaraswamy_warp(self.train_x, self.bounds)
                             if self.should_warp_input else None)
-        # initialie model
-        # make a GP
+
+        ## make a GP
         kernel = self._make_me_a_kernel(kind=self.kernel_kind, train_x=self.train_x, train_y=self.train_y)
         self.model = SingleTaskGP(
             train_X=self.train_x,
-            train_Y=y_to_train,
+            train_Y=self.train_y,
             covar_module=kernel,
-            input_transform=input_transform
+            input_transform=input_transform,
+            # outcome transform - default (scale) and not learnable
         ).to(self.train_x)
+
+        ## outcome transformation
+        if self.use_power_outcome_transform:
+            outcome_warp_yj = YeoJohnsonGPytorch()
+
         # pose surrogate quality criterion
-        self.mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
+        if self.use_power_outcome_transform:
+            self.mll = YJWarpedExactMLL(self.model.likelihood, self.model, warping=outcome_warp_yj, train_Y_raw=self.train_y)
+        else:
+            self.mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
         # load state dict if any for faster convergence
         if state_dict:
-            self.model.load_state_dict(state_dict=state_dict)
+            load_state_dict(model=self.model, state_dict=state_dict, silent=True)
+
         # fit model
-        fit_gpytorch_mll(self.mll)
-
-
-    def _output_transformation(self, y_as_is):
-        """
-        Должен применяться на каждом шаге BO перед 
-        Преобразование которое нормализует данные.
-        Также по-умолчанию стандартизует их.
-        Xarray-like of shape (n_samples, n_features)
-        """
-        from sklearn.preprocessing import power_transform
-
-        try:
-            if y_as_is.min() <= 0:
-                y = torch.from_numpy(power_transform(y_as_is / y_as_is.std(), method="yeo-johnson"))
-            else:
-                y = torch.from_numpy(power_transform(y_as_is / y_as_is.std(), method="box-cox"))
-                if y.std() < 0.5:
-                    y = torch.from_numpy(power_transform(y_as_is / y_as_is.std(), method="yeo-johnson"))
-            if y.std() < 0.5:
-                raise RuntimeError("Power transformation failed")
-        except:
-            y = y_as_is.clone()  # для консистентности выхода, чтобы вегда возвращал копию.
-        y = y.type(dtype=dtype)
-        return y
+        fit_gpytorch_mll(self.mll,
+                        max_attempts = self._max_attempts,
+                        pick_best_of_all_attempts=self._best_train,
+                         )
+        if self.use_power_outcome_transform:
+            # removes warped outcome from computational graph => they don't require grad
+            self.model.train_targets = self.model.train_targets.detach()
 
 
     def _get_kumaraswamy_warp(self, train_x, bounds):
         """
         Kumaraswamy преобразованеи для учёта гетероскедастичности
         """
-        from botorch.models.transforms.input import Warp
-        from gpytorch.priors.torch_priors import LogNormalPrior
-
         return Warp(  # уже содержит внутри kumaraswamy преобразование (и нормализацию)
                 d=train_x.shape[-1],
                 indices=list(range(train_x.shape[-1])),
@@ -140,3 +141,21 @@ class SimpleModel(ABC):
                 concentration0_prior=LogNormalPrior(0.0, 0.75**0.5),
                 bounds=bounds,
             )
+
+
+def load_state_dict(model: SingleTaskGP, state_dict, safe=True, silent=True):
+    """
+    If model differs from the state dict, don't load it
+    This is useful in case of dinamic model building
+    """
+    if safe:
+        model_keys = model.state_dict().keys()
+        st_d_keys = state_dict.keys()
+        if model_keys == st_d_keys:
+            model.load_state_dict(state_dict)
+        else:
+            if not silent:
+                print("State dict doesn't match")
+                assert False
+    else:
+        model.load_state_dict(state_dict)
