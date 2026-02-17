@@ -51,6 +51,10 @@ class AbstractParameter(ABC):
         # borders in GA space
         pass
 
+    # @abstractmethod
+    # def __repr__(self) -> str:
+    #     pass
+
 
 class RealParam(AbstractParameter):  # abstract
     def __init__(self, index: int, ub: float, lb: float, name: Optional[str]=None) -> None:
@@ -70,6 +74,7 @@ class RealP(RealParam):
     def __init__(self, index: int, lb: float, ub: float, *, ds_tolerance: Optional[float]=None, name: Optional[str]=None) -> None:
         self.ds_lb = lb
         self.ds_ub = ub
+        self.ds_tolerance = ds_tolerance
 
         ga_tolerance = ds_tolerance / (ub - lb) if ds_tolerance else 1e-6
         super().__init__(index=index, lb=0, ub=1, name=name)
@@ -86,6 +91,14 @@ class RealP(RealParam):
     def pymoo_var(self) -> pmv.BoundedVariable:
         # borders in GA space
         return pmv.Real(bounds=(self.ga_lb, self.ga_ub))
+
+    def __repr__(self) -> str:
+        _cls: str = self.__class__.__name__
+        if self.ds_tolerance is not None:
+            repr = f"{_cls}[{self.name}](lb={self.ds_lb}, ub={self.ds_ub}, tol={self.ds_tolerance})" 
+        else:
+            repr = f"{_cls}[{self.name}](lb={self.ds_lb}, ub={self.ds_ub})" 
+        return repr
 
 
 class RealPowP(RealParam):
@@ -115,6 +128,11 @@ class RealPowP(RealParam):
         # borders in GA space
         return pmv.Real(bounds=(self.ga_lb, self.ga_ub))
 
+    def __repr__(self) -> str:
+        _cls: str = self.__class__.__name__
+        rv = f"{_cls}[{self.name}](lb={self.ds_lb}, ub={self.ds_ub}, base={self.base})" 
+        return rv
+
 
 class DiscreteParam(AbstractParameter):  # abstract
     def __init__(self, index: int, lb: int, ub: int, n: int, *, name: Optional[str]=None) -> None:
@@ -142,7 +160,7 @@ class DiscreteParam(AbstractParameter):  # abstract
 
 class BoolP(DiscreteParam):
     def __init__(self, index, *, name: Optional[str]=None):
-        super().__init__(index, lb=1, ub=2, n=2, name=name)
+        super().__init__(index, lb=1, ub=2, n=2, name=name)  # lb = 1 possibly due to rounding issues during converting
     
     #* DS <-> GA
     def from_DS_to_GA(self, X: DS_Tensor) -> GA_Tensor:
@@ -154,7 +172,13 @@ class BoolP(DiscreteParam):
     @cached_property
     def pymoo_var(self) -> pmv.BoundedVariable:
         # borders in GA space
-        return pmv.Binary()
+        # return pmv.Binary()
+        return pmv.Integer(bounds=(self.ga_lb, self.ga_ub))
+
+    def __repr__(self) -> str:
+        _cls: str = self.__class__.__name__
+        rv = f"{_cls}[{self.name}]()"
+        return rv
 
 
 class IntegerP(DiscreteParam):
@@ -173,6 +197,14 @@ class IntegerP(DiscreteParam):
     def pymoo_var(self) -> pmv.BoundedVariable:
         # borders in GA space
         return pmv.Integer(bounds=(self.ga_lb, self.ga_ub))
+    
+    def __repr__(self) -> str:
+        _cls: str = self.__class__.__name__
+        ds_lb = self._shift
+        ds_ub = self.ga_ub + self._shift - 1
+
+        rv = f"{_cls}[{self.name}](lb={ds_lb}, ub={ds_ub})"
+        return rv
 
 
 class CategoricalP(DiscreteParam):
@@ -219,6 +251,12 @@ class CategoricalP(DiscreteParam):
         # borders in GA space
         return pmv.Choice(options=list(range(self.ga_lb, self.ga_ub + 1)))
 
+    def __repr__(self) -> str:
+        _cls: str = self.__class__.__name__
+        sorted_keys_asc = sorted(self.cat_to_index, key=self.cat_to_index.get)
+        rv = f"{_cls}[{self.name}](categories={sorted_keys_asc})"
+        return rv
+
 
 class DiscreteRealP(DiscreteParam):
     def __init__(self, index, lb, ub, n, *, name: Optional[str]=None):
@@ -240,3 +278,8 @@ class DiscreteRealP(DiscreteParam):
     def pymoo_var(self) -> pmv.BoundedVariable:
         # borders in GA space
         return pmv.Integer(bounds=(self.ga_lb, self.ga_ub))
+
+    def __repr__(self) -> str:
+        _cls: str = self.__class__.__name__
+        repr = f"{_cls}[{self.name}](lb={self.design_lb}, ub={self.design_ub}, n={self.ga_ub})"
+        return repr
