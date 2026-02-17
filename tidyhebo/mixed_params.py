@@ -172,7 +172,6 @@ class BoolP(DiscreteParam):
     @cached_property
     def pymoo_var(self) -> pmv.BoundedVariable:
         # borders in GA space
-        # return pmv.Binary()
         return pmv.Integer(bounds=(self.ga_lb, self.ga_ub))
 
     def __repr__(self) -> str:
