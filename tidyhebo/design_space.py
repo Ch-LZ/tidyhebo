@@ -157,4 +157,8 @@ class MixedDesignSpace:
             else:
                 assert False, "Unsupported parameter type"
         return variants
+
+
+    def __repr__(self) -> str:
+        return repr(self.params)
 # endregion

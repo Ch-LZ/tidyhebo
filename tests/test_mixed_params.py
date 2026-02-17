@@ -29,6 +29,10 @@ def test_realp():
 
     rp2 = RealP(0, 1., 3., name="DEADBEEF")
     assert rp2.name == "DEADBEEF"
+    # representations test
+    assert repr(rp2) == "RealP[DEADBEEF](lb=1.0, ub=3.0)"
+    rp3 = RealP(1, 1., 3., ds_tolerance=1e-5)
+    assert repr(rp3) == "RealP[x1](lb=1.0, ub=3.0, tol=1e-05)"
 
 
 def test_boolp():
@@ -38,7 +42,7 @@ def test_boolp():
     assert bp.name == "x0"
     assert bp.ga_lb == 1
     assert bp.ga_ub == 2
-    assert isinstance(bp.pymoo_var, pmv.Binary)
+    assert isinstance(bp.pymoo_var, pmv.Integer)
 
     x_ds = torch.tensor([True, False])
     x_ga = torch.tensor([2., 1.])
@@ -46,12 +50,14 @@ def test_boolp():
 
     assert (bp.from_DS_to_GA(x_ds) == x_ga).all()
     assert (bp.from_GA_to_DS(x_ga) == x_ds).all()
+    assert bp.from_GA_to_DS(x_ga).dtype is torch.bool
     
     assert bp.from_GA_to_GP(x_ga) == approx(x_gp, abs=1e-5)
     assert (bp.from_GP_to_GA(x_gp) == x_ga).all()
 
     bp2 = BoolP(0, name="DEADBEEF")
     assert bp2.name == "DEADBEEF"
+    assert repr(bp2) == "BoolP[DEADBEEF]()"
 
 
 def test_integerp():
@@ -63,8 +69,8 @@ def test_integerp():
     assert ip.ga_ub == 3
 
     assert isinstance(ip.pymoo_var, pmv.Integer)
-    assert ip.pymoo_var.lb == 1
-    assert ip.pymoo_var.ub == 3
+    assert ip.pymoo_var.bounds[0] == 1
+    assert ip.pymoo_var.bounds[1] == 3
 
     x_ds = torch.tensor([2., 3.])
     x_ga = torch.tensor([2., 3.])
@@ -77,6 +83,7 @@ def test_integerp():
 
     ip2 = IntegerP(0, 1, 3, name="DEADBEEF")
     assert ip2.name == "DEADBEEF"
+    assert repr(ip2) == "IntegerP[DEADBEEF](lb=1, ub=3)"
 
 #todo: прописываем все контракты и делаем сильные тесты
 def test_categoricalp():
@@ -102,6 +109,7 @@ def test_categoricalp():
 
     cp2 = CategoricalP(0, [-3, -2, -1], name="DEADBEEF")
     assert cp2.name == "DEADBEEF"
+    assert repr(cp2) == "CategoricalP[DEADBEEF](categories=[-3, -2, -1])"
 
 
 def test_discreterealp():
@@ -126,6 +134,8 @@ def test_discreterealp():
 
     cp2 = DiscreteRealP(0, 2, 5, 4, name="DEADBEEF")
     assert cp2.name == "DEADBEEF"
+
+    assert repr(cp2) == "DiscreteRealP[DEADBEEF](lb=2, ub=5, n=4)"
 
 
 def test_tolerance():
@@ -155,3 +165,5 @@ def test_realpowp():
 
     assert torch.all(rpp.from_GA_to_GP(x_ga) == x_gp)
     assert torch.all(rpp.from_GP_to_GA(x_gp) == x_ga)
+
+    assert repr(rpp) == "RealPowP[x0](lb=1, ub=1000, base=10)"

@@ -118,3 +118,8 @@ def test_tolerance():
     ])
     print(mds.tolerances)
     assert (mds.are_values_new(cand, X_old) == torch.tensor([False, False])).all()
+
+
+def test_repr():
+    mds = MixedDesignSpace([BoolP(0), BoolP(1)])
+    assert repr(mds) == "[BoolP[x0](), BoolP[x1]()]"

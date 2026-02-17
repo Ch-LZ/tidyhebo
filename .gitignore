@@ -6,4 +6,12 @@ side_code
 data/img
 *.egg-info
 *.zip
+notebooks
+img
 TODO.md
+edbo/experiments
+sandbox*
+/olympus
+outdated/
+/hpo*
+/crystbo
