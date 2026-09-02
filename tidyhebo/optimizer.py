@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import torch
-from typing import List
+from typing import Generator, List
 from botorch.acquisition.objective import GenericMCObjective
 
 from .acquisition import HedgedPareto
@@ -17,10 +17,11 @@ class tidyHEBO:
                  train_x: DS_df | DS_Tensor = None, 
                  train_y: torch.Tensor | np.ndarray = None,
                  n_init: int | None = None,
-                 _state_dict=None) -> None:
+                 _state_dict=None
+                 ) -> None:
         """
-        n_init - сколько точек равномерно (соболем) семплировать из пространства дизайна. 
-        Введено для целей равномерной инициализации (sobol sampling ~lhs) при отсутствии train_x и train_y.
+        n_init - how many points to sample uniformly (Sobol) from the design space.
+        Used for uniform initialization when train_x and train_y are not provided.
         """
         self._check_user_input(params=parameters, x=train_x, y=train_y)
         self.design_space: MixedDesignSpace = MixedDesignSpace(parameters)  # bounds, parameters
@@ -70,23 +71,85 @@ class tidyHEBO:
         # acquisition function config
         self.use_logei: bool = True
         self.beta: int = 4
-        self.quadrature_size: int = 64
+        self.consider_fast_acq_path: bool = True
+        self.quadrature_size: int = 64  # for fast acquisition calculation if available
         self.mc_samples: int = 4096
 
         # GA config
-        self.pop_size=128
-        self.n_generations=100
+        self.pop_size = 128
+        self.n_generations = 100
 
+    # -------------------------------------------------------------------------
+    # Main public methods
+    # -------------------------------------------------------------------------
 
-    def suggest(self, return_all=False) -> DS_df | DS_Tensor:
-        # if initialization sampling required
+    def suggest(self, candidates: DS_df | DS_Tensor = None, return_all=False) -> DS_df | DS_Tensor:
+        """
+        Suggest next point(s) to evaluate.
+
+        Args:
+            candidates: Optional discrete set of candidate points (in design space).
+                        If provided, acquisition is evaluated directly on these points.
+            return_all: If True, return all points from the Pareto frontier
+                        (discrete) or all candidates found by the evolutionary optimizer
+                        (continuous). Otherwise, return a single randomly chosen point.
+        """
+        # If initialization sampling is still ongoing
         if self._init_design_generator:
             another_init_cand = next(self._init_design_generator, None)
             if another_init_cand is not None:
                 return another_init_cand
 
-        # train model
-        model, acqf, _state_dict = train_model_and_AF(
+        # Train model and build acquisition function
+        model, acqf, state_dict = self._train_and_get_acqf()
+        self.model = model
+        self.state_dict = state_dict
+
+        # Get full set of candidates in GA space
+        if candidates is not None:
+            _check_input_x(self.design_space.params, candidates, _y=None)
+            if isinstance(candidates, pd.DataFrame):
+                candidates = candidates[self.design_space.ordered_params]
+            cand_ga = self._suggest_discrete(candidates, acqf)   # returns all Pareto points
+        else:
+            cand_ga = self._suggest_continuous(acqf)             # returns all points from EA
+
+        # Convert to design space
+        result = self.design_space.from_GA_to_DS(cand_ga, return_df=self._return_df)
+
+        # Decide how many to return
+        if return_all:
+            return result
+        else:
+            if self._return_df:
+                return result.sample(n=1)
+            else:
+                return result[torch.randint(len(result), (1,))]
+
+    def observe(self, X, y) -> None:
+        """
+        Add new observations to the training data.
+        """
+        self._check_user_input(params=self.design_space.params, x=X, y=y)
+        if isinstance(X, pd.DataFrame):
+            X = X[self.design_space.ordered_params]
+
+        y = y if isinstance(y, torch.Tensor) else torch.tensor(y, dtype=dtype)
+        if y.dim() == 1:
+            y = y.reshape(-1, 1)  # column
+        
+        x = self.design_space.from_DS_to_GA(X)
+
+        self.train_x = torch.cat([self.train_x, x], axis=0)
+        self.train_y = torch.cat([self.train_y, y], axis=0)
+
+    # -------------------------------------------------------------------------
+    # Private helper methods for suggestion
+    # -------------------------------------------------------------------------
+
+    def _train_and_get_acqf(self):
+        """Train the GP model and return the acquisition function."""
+        return train_model_and_AF(
             train_x=self.design_space.from_GA_to_GP(self.train_x),
             train_y=self.train_y,
             kernel=self.kernel,
@@ -99,69 +162,75 @@ class tidyHEBO:
             use_logei=self.use_logei,
             _best_train=self._best_train,
             _max_attempts=self._max_attempts,
+            consider_fast_acq_path=self.consider_fast_acq_path,
             quadrature_size=self.quadrature_size,
             mc_samples=self.mc_samples,
-        
         )
-        self.model = model,
-        self.state_dict = _state_dict        
 
-        cand: GA_Tensor = optimize_real_hedged_acquisition(
-            acqf=acqf, opt_space=self.design_space, train_x=self.train_x,
-            pop_size=self.pop_size, n_generations=self.n_generations,
+    def _suggest_discrete(self, candidates: DS_df | DS_Tensor, acqf) -> GA_Tensor:
+        """
+        Evaluate acquisition on a discrete set of candidates and return
+        the Pareto frontier (all non‑dominated points) in GA space.
+        """
+        from botorch.utils.multi_objective.pareto import is_non_dominated
+
+        cand_ga = self.design_space.from_DS_to_GA(candidates)  # shape (n, d)
+        print(f"cand_ga_shape: {cand_ga.shape}")
+
+        with torch.no_grad():
+            acq_values = acqf(cand_ga.unsqueeze(1))  # shape (n, 3)
+        print(f"acq_values_shape: {acq_values.shape}")
+        pareto_mask = is_non_dominated(acq_values, deduplicate=False).detach().cpu().numpy()
+        print(f"pareto_mask.shape: {pareto_mask}")
+        return cand_ga[pareto_mask]  # always have at least one point
+
+    def _suggest_continuous(self, acqf) -> GA_Tensor:
+        """
+        Run evolutionary optimization over the entire design space and return
+        all candidate points found (typically a Pareto frontier) in GA space.
+        """
+        cand_ga: GA_Tensor = optimize_real_hedged_acquisition(
+            acqf=acqf,
+            opt_space=self.design_space,
+            train_x=self.train_x,
+            pop_size=self.pop_size,
+            n_generations=self.n_generations,
         )
-        # если нет кандидатов - пространство поиска слишком маленькое (почти наверняка)
-        # либо что-то пошло не так с оптимизаторами паретто-фронта (вряд ли)
-        if cand.numel() == 0:
-            print("No candidates was found after paretto-front serach!")
-            cand = self.design_space._large_GA_sample
-            cand = cand[self.design_space.are_values_new(cand=cand, X_old=self.train_x)]
-            if cand.numel() == 0:
+        if cand_ga.numel() == 0:
+            print("No candidates found after Pareto-front search!")
+            cand_ga = self.design_space._large_GA_sample
+            cand_ga = cand_ga[self.design_space.are_values_new(cand=cand_ga, X_old=self.train_x)]
+            if cand_ga.numel() == 0:
                 raise RuntimeError("Search space provided by parameters is too small, no new values can be found")
-
-        # reformat back to design space
-        res: DS_df | DS_Tensor = self.design_space.from_GA_to_DS(cand, return_df=self._return_df)
-        if return_all:
-            return res
-        if self._return_df:
-            return res.sample(n=1)
-        else:
-            return res[torch.randint(low=0, high=len(res), size=(1,))]
-
-
-    def observe(self, X, y) -> None:
-        """
-        Получает наблюдения в пространстве дизайна
-        """
-        self._check_user_input(params=self.design_space.params, x=X, y=y)
-        if isinstance(X, pd.DataFrame):
-            X = X[self.design_space.ordered_params]
-
-        y = y if isinstance(y, torch.Tensor) else torch.tensor(y, dtype=dtype)
-        if y.dim() == 1:
-            y = y.reshape(-1, 1)  # column
-        
-        x = self.design_space.from_DS_to_GA(X)
-        self.train_x = torch.cat([self.train_x, x], axis=0)
-        self.train_y = torch.cat([self.train_y, y], axis=0)
-
+        return cand_ga
 
     def _check_user_input(self, params, x, y):
         # соответствие типов x, y: pd.DataFrame, np.array || torch.Tensor, torch.Tensor
         # соответствие названий параметров названиям колонок
+        _check_input_x(params, x, y)
+        _check_input_y(params, x, y)
         if isinstance(x, pd.DataFrame):
-            # not empty
-            assert len(y) > 0, "Empty y is not allowed"
-            assert x.shape[0] > 0, "Empty x is not allowed"
-            # lens match
             assert len(y) == x.shape[0], "Number of samples in X and y mismatch"
-            # right type
-            assert isinstance(y, np.ndarray), "If x is DataFrame, y should be np.array"
-            assert len(y.shape) in (0, 1, 2)
-            # right column names
-            params_names = [p.name for p in params]
-            assert frozenset(x.columns.to_list()) == frozenset(params_names), "Parameter names and column names doesn't match"
-            assert x.columns.is_unique, "Column names should be unique"
+
+
+# -----------------------------------------------------------------------------
+# External helper functions (unchanged)
+# -----------------------------------------------------------------------------
+def _check_input_x(params, x, _y):
+    if isinstance(x, pd.DataFrame):
+        assert x.shape[0] > 0, "Empty x is not allowed"
+        # right column names
+        params_names = [p.name for p in params]
+        # must much in order
+        assert frozenset(x.columns.to_list()) == frozenset(params_names), f"Parameter names: {params_names} and columns {x.columns.to_list()} names doesn't match"
+        assert x.columns.is_unique, "Column names should be unique"        
+
+def _check_input_y(_params, x, y):
+    if isinstance(x, pd.DataFrame):
+        assert len(y) > 0, "Empty y is not allowed"
+        assert isinstance(y, np.ndarray), "If x is DataFrame, y should be np.array"
+        assert len(y.shape) in (0, 1, 2)
+
 
 
 def train_model_and_AF(
@@ -176,10 +245,11 @@ def train_model_and_AF(
     _max_attempts=10, 
     beta=4, 
     use_logei=True,
+    consider_fast_acq_path=True,
     quadrature_size=64,
     mc_samples=4096,
-    ):
-        # train model
+):
+    # train model
     model: SimpleModel = SimpleModel(
         train_x=train_x,
         train_y=train_y,
@@ -191,7 +261,6 @@ def train_model_and_AF(
         _max_attempts=_max_attempts,
     )
     model.train_model(state_dict=state_dict)
-
 
     new_state_dict = model.model.state_dict() if not refit_from_scratch else None
 
@@ -213,20 +282,18 @@ def train_model_and_AF(
             else None
         ),
         use_logei=use_logei,
+        consider_fast_acq_path=consider_fast_acq_path,
         quadrature_size=quadrature_size,
         mc_samples=mc_samples,
     )
     return model, acqf, new_state_dict
 
 
-from typing import Generator
-from torch.quasirandom import SobolEngine
-
 def gen_init_design(n_init: int, design_space: MixedDesignSpace, return_df: bool):
+    """Generator for Sobol initialization points."""
     assert n_init > 0
-    # prepare design
     dim = len(design_space.params)
-    sampler = SobolEngine(dim, scramble=True)
+    sampler = torch.quasirandom.SobolEngine(dim, scramble=True)
     for i in range(n_init):
         x_init_GP = sampler.draw(1, dtype=torch.double)
         yield design_space.from_GP_to_DS(x_init_GP, return_df=return_df)
