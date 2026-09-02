@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 import torch
 
 from botorch.utils.multi_objective.pareto import is_non_dominated
@@ -26,9 +25,12 @@ from typing import List
 
 # region Genetic Algorithm
 def _from_dicts_to_np(x, ordered_params):
-    # the most convenient way to turn array[dict] into np.array[...]
-    # alternatively can be done with list comprehension three times faster, but with no order guaranteed, nor considerable speed-up
-    return pd.DataFrame.from_records(x)[ordered_params].values.astype(float)
+    # Explicit indexing preserves parameter order and avoids constructing a
+    # pandas DataFrame in every NSGA-III generation.
+    return np.asarray(
+        [[record[name] for name in ordered_params] for record in x],
+        dtype=float,
+    )
 
 
 def _get_pareto_from_archive(archive, ordered_params):

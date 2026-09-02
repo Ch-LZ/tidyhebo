@@ -124,8 +124,18 @@ class SimpleModel:
                         pick_best_of_all_attempts=self._best_train,
                          )
         if self.use_power_outcome_transform:
-            # removes warped outcome from computational graph => they don't require grad
-            self.model.train_targets = self.model.train_targets.detach()
+            # During optimization YJWarpedExactMLL evaluates the current
+            # transformed targets directly against the GP prior. 
+            # But the ExactGP model by default stores `train_targets` from previous step.
+            # Here we use final fitted lambda, so ExactGP will calculate 
+            # posterior conditioned on correct (correctly transformed) targets.
+            with torch.no_grad():
+                train_targets = self.model.outcome_warp_yj(self.train_y).squeeze(-1)
+            self.model.set_train_data(
+                inputs=self.model.train_inputs,
+                targets=train_targets.detach(),
+                strict=False,
+            )
 
 
     def _get_kumaraswamy_warp(self, train_x, bounds):

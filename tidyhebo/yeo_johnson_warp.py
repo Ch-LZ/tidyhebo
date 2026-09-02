@@ -1,5 +1,6 @@
 # region yeo-johnson
 import torch
+from gpytorch.distributions import MultivariateNormal  # typing only
 
 
 def yeo_johnson_transform(y: torch.Tensor, lam: float, epsilon:float = 1e-14):
@@ -114,8 +115,15 @@ class YeoJohnsonGPytorch(GPytorchModule):
     def __init__(self):
         super().__init__()
 
-        #*note: _scale is modified externally at YJWarpedExactMLL at training time; should not require gard
-        self._scale = torch.tensor([1.0], dtype=torch.double)
+        # _scale is set by YJWarpedExactMLL and does not require gradients.
+        # A non-persistent buffer follows dtype / device conversions without
+        # changing the model state_dict format. 
+        # *Note: It will not appear in model.parameters()
+        self.register_buffer(
+            "_scale",
+            torch.tensor([1.0], dtype=torch.double),
+            persistent=False,
+        )
 
         self.register_parameter("raw_lam", torch.nn.Parameter(torch.tensor(1.0 + 1e-6, dtype=torch.double)))
         self.register_constraint("raw_lam", Interval(-3.0, 3.0))
@@ -180,7 +188,7 @@ class YJWarpedExactMLL(ExactMarginalLogLikelihood):
     """
     The class to train SingleTaskGP and YeoJohnson transform together
     and perform changes requried for that.
-    Tested only for single outcome only.
+    Tested for single outcome tasks only.
     """
     def __init__(self, likelihood, model: SingleTaskGP, 
                  warping: YeoJohnsonGPytorch, train_Y_raw: torch.Tensor):
@@ -202,19 +210,23 @@ class YJWarpedExactMLL(ExactMarginalLogLikelihood):
         self.train_Y_raw: torch.Tensor = train_Y_raw
 
         # Introduce scaling factor to the transform
-        _scale = (train_Y_raw.max() - train_Y_raw.min())
-        _scale = _scale * (train_Y_raw / _scale).std()
+        # (max - min) * std(y / (max - min)) is exactly std(y), but the
+        # expanded expression divides by zero for constant observations.
+        _scale = train_Y_raw.std()
         if (_scale <= 1e-8) or torch.isnan(_scale).any():
-            _scale = torch.tensor([1.0])
+            _scale = train_Y_raw.new_tensor(1.0)
         _scale = _scale.detach()
         warping._scale = _scale  # should not require grad
 
 
-    def forward(self, _output, _target,  *params, **kwargs):
+    def forward(self, output: MultivariateNormal, _target,  *params, **kwargs):
         """
         Is used at botorch.optim.closures.model_closures -> @GetLossClosure.register(ExactMarginalLogLikelihood, object, object, NoneType)
         Params:
-            _output - prediction of GP. With previous lambda involved.
+            output - GP prior at the training inputs, calculated by the
+                BoTorch loss closure. In ExactGP training mode this does not
+                depend on train_targets or on lambda.
+                p(f| X,θ) = N(m(X),Kff(X,X;θ))
             _target - model.train_targets just passed through. Can't be used since they are already warped with previous lambda
             params - transformed input for consistency. Just to pass into forward as in ExactMarginalLogLikelihood
         """
@@ -224,14 +236,6 @@ class YJWarpedExactMLL(ExactMarginalLogLikelihood):
         y_transformed = trainable_warp.forward(y_raw)
         y_transformed = y_transformed.reshape(self.train_Y_raw.shape)
         y_transformed = y_transformed.squeeze(-1)
-
-        self.model.set_train_data(
-            inputs=self.model.train_inputs,
-            targets=y_transformed,
-            strict=False,  # no redundant checks
-        )
-
-        output = self.model(*self.model.train_inputs)
 
         gp_mll_term = super().forward(
             output,
