@@ -70,6 +70,8 @@ class tidyHEBO:
         # acquisition function config
         self.use_logei: bool = True
         self.beta: int = 4
+        self.quadrature_size: int = 64
+        self.mc_samples: int = 4096
 
         # GA config
         self.pop_size=128
@@ -97,6 +99,8 @@ class tidyHEBO:
             use_logei=self.use_logei,
             _best_train=self._best_train,
             _max_attempts=self._max_attempts,
+            quadrature_size=self.quadrature_size,
+            mc_samples=self.mc_samples,
         
         )
         self.model = model,
@@ -172,6 +176,8 @@ def train_model_and_AF(
     _max_attempts=10, 
     beta=4, 
     use_logei=True,
+    quadrature_size=64,
+    mc_samples=4096,
     ):
         # train model
     model: SimpleModel = SimpleModel(
@@ -201,7 +207,14 @@ def train_model_and_AF(
         beta=beta,
         train_x=train_x,
         objective=objective,
+        outcome_warp=(
+            model.model.outcome_warp_yj
+            if model.use_power_outcome_transform
+            else None
+        ),
         use_logei=use_logei,
+        quadrature_size=quadrature_size,
+        mc_samples=mc_samples,
     )
     return model, acqf, new_state_dict
 
