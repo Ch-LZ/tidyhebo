@@ -72,7 +72,7 @@ class tidyHEBO:
         self.use_logei: bool = True
         self.beta: int = 4
         self.consider_fast_acq_path: bool = True
-        self.quadrature_size: int = 64  # for fast acquisition calculation if available
+        self.quadrature_size: int = 512  # for fast acquisition calculation if available
         self.mc_samples: int = 4096
 
         # GA config
@@ -94,11 +94,9 @@ class tidyHEBO:
                         (discrete) or all candidates found by the evolutionary optimizer
                         (continuous). Otherwise, return a single randomly chosen point.
         """
-        # If initialization sampling is still ongoing
-        if self._init_design_generator:
-            another_init_cand = next(self._init_design_generator, None)
-            if another_init_cand is not None:
-                return another_init_cand
+        init_pts_if_any: DS_df | DS_Tensor | None = self._suggest_init_points_if_remoained(return_all=return_all)
+        if init_pts_if_any is not None:
+            return init_pts_if_any
 
         # Train model and build acquisition function
         model, acqf, state_dict = self._train_and_get_acqf()
@@ -129,6 +127,11 @@ class tidyHEBO:
     def observe(self, X, y) -> None:
         """
         Add new observations to the training data.
+
+        X: 2D array-like, where one row for observations
+        y: 2D array-like, where one row for one y value (a column)
+        
+        Expected data types for pair (X, y) are (1) for usage (pd.DataFrame, np.array) or (2) for testing (torch.tensor, torch.tensor)
         """
         self._check_user_input(params=self.design_space.params, x=X, y=y)
         if isinstance(X, pd.DataFrame):
@@ -146,6 +149,25 @@ class tidyHEBO:
     # -------------------------------------------------------------------------
     # Private helper methods for suggestion
     # -------------------------------------------------------------------------
+    def _suggest_init_points_if_remoained(self, return_all=False) -> DS_df | DS_Tensor | None:
+        # If initialization sampling is still ongoing
+        if self._init_design_generator:
+            if return_all:  # gather all remained points from the generator
+                all_points = list(self._init_design_generator)
+                self._init_design_generator = None  # генератор исчерпан
+                if self._return_df:  # DS_df
+                    return pd.concat(all_points, ignore_index=True) if all_points else None
+                else:   # DS_Tensor
+                    return torch.cat(all_points, dim=0) if all_points else None
+            else:  # return one
+                another_init_cand = next(self._init_design_generator, None)
+                if another_init_cand is not None:  
+                    return another_init_cand  # already formatted to required type
+                else:  # might be first time we know generator is exhausted
+                    self._init_design_generator = None
+                    return None
+        return None
+
 
     def _train_and_get_acqf(self):
         """Train the GP model and return the acquisition function."""

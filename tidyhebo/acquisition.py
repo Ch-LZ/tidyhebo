@@ -15,6 +15,7 @@ from botorch.sampling.normal import SobolQMCNormalSampler
 from torch import Tensor
 
 from .common import GP_Tensor
+from .yeo_johnson_warp import YeoJohnsonGPytorch
 
 
 class HedgedPareto(AcquisitionFunction):
@@ -30,7 +31,7 @@ class HedgedPareto(AcquisitionFunction):
         train_x: GP_Tensor,
         use_logei: bool = False,
         objective=None,
-        outcome_warp=None,
+        outcome_warp: YeoJohnsonGPytorch | None = None,
         consider_fast_acq_path=True,
         quadrature_size: int = 64,
         mc_samples: int = 4096,
@@ -185,6 +186,7 @@ class HedgedPareto(AcquisitionFunction):
         """
         # If the fast path is unavailable or X has more than one point (q>1),
         # use the MC‑based acquisition objects.
+        #* Note: q here for special BoTorch batched acquisition (see: https://botorch.org/docs/acquisition.html)
         if (not self._use_fast_path) or X.shape[-2] != 1:
             val_ei = torch.exp(self.qLogNEI(X))
             val_pi = self.qPI(X)

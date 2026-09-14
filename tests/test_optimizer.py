@@ -140,3 +140,49 @@ def test_suggest():
     'x1': np.float64,
     })
     assert suggestion.dtypes.equals(expected_dtypes)
+
+# ----------------------------------------------------------------------
+# Tests for init generator (n_init) functionality
+# ----------------------------------------------------------------------
+
+def test_init_generator_single():
+    """Точки берутся по одной; после исчерпания генератор обнуляется."""
+    param = RealP(0, 0.0, 1.0)
+    n_init = 5
+    optimizer = tidyHEBO(parameters=[param], n_init=n_init)
+
+    for _ in range(n_init):
+        suggestion = optimizer.suggest(return_all=False)
+        assert suggestion.shape == (1, 1)
+        assert suggestion.columns[0] == param.name
+        assert 0.0 <= suggestion.iloc[0, 0] <= 1.0
+
+    assert optimizer._init_design_generator is not None
+
+
+def test_init_generator_all():
+    """Все точки забираются сразу; генератор обнуляется."""
+    param = RealP(0, 0.0, 1.0)
+    n_init = 5
+    optimizer = tidyHEBO(parameters=[param], n_init=n_init)
+
+    all_points = optimizer.suggest(return_all=True)
+    assert all_points.shape == (n_init, 1)
+    assert all_points.columns[0] == param.name
+    assert all(0.0 <= v <= 1.0 for v in all_points.iloc[:, 0])
+    assert optimizer._init_design_generator is None
+
+
+def test_init_generator_mixed():
+    """Смешанный режим: пара точек по одной, остаток — через return_all."""
+    param = RealP(0, 0.0, 1.0)
+    n_init = 5
+    optimizer = tidyHEBO(parameters=[param], n_init=n_init)
+
+    singles = [optimizer.suggest(return_all=False) for _ in range(2)]
+    rest = optimizer.suggest(return_all=True)
+
+    assert rest.shape[0] == n_init - 2
+    values = [pt.iloc[0, 0] for pt in singles] + rest.iloc[:, 0].tolist()
+    assert len(set(values)) == n_init
+    assert optimizer._init_design_generator is None
