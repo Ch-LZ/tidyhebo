@@ -1,5 +1,9 @@
 # tidyHEBO
 
+[![Tests](https://github.com/Ch-LZ/tidyhebo/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/Ch-LZ/tidyhebo/actions/workflows/tests.yml?query=branch%3Amain)
+[![Python 3.10–3.14](https://img.shields.io/badge/Python-3.10%E2%80%933.14-3776AB?logo=python&logoColor=white)](#install)
+[![License: CC BY-NC 4.0](https://img.shields.io/badge/License-CC%20BY--NC%204.0-lightgrey)](LICENSE.md)
+
 Bayesian optimization with jointly fitted Gaussian-process/output warping and
 the qMACE acquisition ensemble. The optimizer maximizes one scalar objective;
 negate a loss when minimizing. Sequential and batch suggestions use the same
