@@ -1,69 +1,62 @@
-"""
-To test correctness of Yeo-Johnson implementation
-"""
-import torch
+"""Fit the YJ normality likelihood against an independent bounded reference."""
+import numpy as np
 import pytest
-from pytest import approx
-from sklearn.preprocessing import PowerTransformer
+import torch
+from scipy.optimize import minimize, minimize_scalar
+from scipy.stats import yeojohnson_llf
 
 from tidyhebo.yeo_johnson_warp import YeoJohnsonGPytorch
 
 
 class YJNormal(YeoJohnsonGPytorch):
+    def _neg_log_like(self, y):
+        """Normality NLL with fitted mean/variance, without constants or prior."""
+        transformed = self(y)
+        return y.numel() / 2 * transformed.var(correction=0).log() - self.log_jacobian(y)
 
-    def _neg_log_like(self, y0):
-        """
-        Loss for YJ(y) ~ N(mu, sigma) likelihood
-        DON'T use while training with GP simultaneously.
-        For testing purposes. 
-        """
-
-        if y0.ndim != 2:
-            y0 = y0.unsqueeze(-1)
-
-        x_trans = self(y0)
-        n_samples = x_trans.shape[0]
-        x_trans_var = x_trans.var(axis=0)
-
-        log_var = torch.log(x_trans_var)
-        loglike = -n_samples / 2 * log_var
-        # note: loss with one lambda and no shift
-        loglike += self.log_jacobian(y0)
-        # loglike += (self.lam - 1) * (torch.sign(y0) * torch.log1p(torch.abs(y0))).sum()
-
-        return -loglike
-
-
-    def _optimize(self, y0):
-        """
-        For YJ(y) ~ N(mu, sigma) likelihood. Mainly for testing purposes.
-        """
-        from torch.optim import Adam
-        optimizer = Adam(self.parameters(), lr=1e-2)
-        for i in range(1000):
-            optimizer.zero_grad()
-
-            loss = self._neg_log_like(y0)
-            loss.backward()
-            optimizer.step()
-
+    def _optimize(self, y):
+        """Fit the constrained raw parameter with autograd and SciPy L-BFGS-B."""
+        def closure(raw):
             with torch.no_grad():
-                self.lam.clamp_(0.0, 2.0)
+                self.raw_lam.copy_(self.raw_lam.new_tensor(raw[0]))
+            loss = self._neg_log_like(y)
+            gradient, = torch.autograd.grad(loss, self.raw_lam)
+            return loss.item(), np.array([gradient.item()])
 
+        result = minimize(
+            closure, np.array([self.raw_lam.item()]), jac=True, method="L-BFGS-B",
+            options={"maxiter": 300, "gtol": 1e-9, "ftol": 1e-12},
+        )
+        with torch.no_grad():
+            self.raw_lam.copy_(self.raw_lam.new_tensor(result.x[0]))
         self.eval()
+        return result
 
 
-def test_likelihood():    
-    y = torch.rand(100, 1).double()
-    # lambda 1
-    reference_power = PowerTransformer(method="yeo-johnson")
-    reference_power.fit(y)
-    lam_reference = reference_power.lambdas_
-    # assert False, lam_reference
-    
-    # lambda 2
-    my_power = YJNormal()
-    my_power._optimize(y.ravel())
-    lam_got = my_power.lam
+@pytest.mark.parametrize('case', ['interior', 'lower_bound', 'upper_bound'])
+def test_likelihood(case):
+    if case == 'interior':
+        y = torch.rand(100, generator=torch.Generator().manual_seed(0), dtype=torch.double)
+    else:
+        y = torch.linspace(-4, 4, 100, dtype=torch.double).exp()
+        if case == 'upper_bound':
+            y = -y
+    data = y.numpy()
+    reference = minimize_scalar(
+        lambda lam: -yeojohnson_llf(lam, data), bounds=(0., 2.), method='bounded',
+        options={'xatol': 1e-12},
+    )
+    assert reference.success
+    # A bounded scalar search approaches endpoints but does not include them.
+    expected_lambda = min((0., reference.x, 2.), key=lambda lam: -yeojohnson_llf(lam, data))
+    expected_loss = -yeojohnson_llf(expected_lambda, data)
+    if case == 'interior':
+        assert 0 < expected_lambda < 2
+    else:
+        assert expected_lambda == (0 if case == 'lower_bound' else 2)
 
-    assert lam_reference[0] == approx(lam_got.item(), abs=1e-3)
+    fitted = YJNormal()
+    result = fitted._optimize(y)
+    assert result.success, result.message
+    assert fitted.lam.item() == pytest.approx(expected_lambda, abs=1e-5)
+    assert fitted._neg_log_like(y).item() == pytest.approx(expected_loss, abs=1e-7)

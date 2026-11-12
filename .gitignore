@@ -15,3 +15,7 @@ sandbox*
 outdated/
 /hpo*
 /crystbo
+cpu_tuning_results.json
+/.tidyhebo_cpu.json
+/.tidyhebo_cpu.json.tmp
+settings.json

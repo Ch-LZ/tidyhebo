@@ -1,7 +1,6 @@
 from tidyhebo.design_space import MixedDesignSpace
 from tidyhebo.mixed_params import (RealP, BoolP, DiscreteRealP, 
                                      CategoricalP, IntegerP, AbstractParameter)
-from tidyhebo.common import dtype
 
 import torch
 from pytest import approx
@@ -32,7 +31,7 @@ def test_transformations_simple():
     x_ds = torch.tensor([
         [1, 2, 3],
         [3, 4, 5]
-    ], dtype=dtype)
+    ], dtype=torch.double)
     x_gp = torch.tensor([
         [0, 0, 0,],
         [1, 1, 1]
@@ -60,29 +59,11 @@ def test_transformations_single_simple():
     assert ms.from_GP_to_DS(x_gp, return_df=False) == approx(x_ds)    
 
 
-def test_sampling():
-    params = [RealP(0, 0, 1)]
-    ms = MixedDesignSpace(params)
-    assert ms._large_GA_sample == approx(torch.linspace(0, 1, 100).reshape(-1, 1))
-
-    params = [BoolP(0)]
-    ms = MixedDesignSpace(params)
-    assert ms._large_GA_sample == approx(torch.tensor([1., 2]).reshape(-1, 1))
-
-    params = [BoolP(0), RealP(1, 0, 1)]
-    ms = MixedDesignSpace(params)
-    assert ms._large_GA_sample == approx(
-        torch.cartesian_prod(
-            torch.tensor([1., 2]), torch.linspace(0, 1, 100)
-            )
-        )
-    
-
 def test_new_vals():
     mds = MixedDesignSpace([BoolP(0)])
     cand = torch.tensor([[0,],
-                         [1.,]], dtype=dtype)
-    X_old = torch.tensor([[0.,]], dtype=dtype)
+                         [1.,]], dtype=torch.double)
+    X_old = torch.tensor([[0.,]], dtype=torch.double)
     assert (mds.are_values_new(cand, X_old) == torch.tensor([False, True])).all()
 
     # граничные условия

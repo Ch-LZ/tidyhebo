@@ -5,54 +5,47 @@ build-backend = "hatchling.build"
 [project]
 name = "tidyhebo"
 version = "0.1.0"
-description = "bayesian optimization model"
+description = "Bayesian optimization with model-consistent warping and qMACE"
 readme = {"file" = "README.md", "content-type" = "text/markdown"}
 license = "CC-BY-NC-4.0"
 license-files = ["LICENSE.md"]
-requires-python = ">=3.10"  # because of botorch
+requires-python = ">=3.10"
 authors = [
-    { name = "Lev Zhukov", email = "your.email@example.com" }, # FIXME: add your mail
+    { name = "Lev Zhukov" },
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: Implementation :: CPython",
     "Operating System :: OS Independent",
 ]
-dependencies = [  # TODO: check & prune
-    "numpy",  # installed before `pymoo` for better performance 
-    "botorch>=0.14",
-    "pymoo",
-    "pandas",
+# Keep BoTorch within the tested release series: qMACE uses its internal reductions.
+dependencies = [
+    "torch>=2.7.1,<3",
+    "botorch>=0.14,<0.19",
+    "gpytorch>=1.14,<2",
+    "pymoo>=0.6.1.5,<0.7",
+    "numpy>=1.26.4,<3",
+    "pandas>=2.2.3,<4",
+    "scipy>=1.13.1,<2",
 ]
 
 [project.urls]
 Source = "https://github.com/Ch-LZ/tidyhebo"
 
 [project.optional-dependencies]
-test = ["pytest"]
-# example = []
-dev = [
-    "tidyhebo[test]", # example
-    "matplotlib==3.3.4", # TODO: complete further
-]
+test = ["pytest>=8.3"]
+dev = ["tidyhebo[test]", "matplotlib"]
 
-# to reliably reproduce results is needed
-lock = [
-    # "python==3.11",
-
-    "botorch~=0.14",
-    "gpytorch~=1.14",
-    "numpy~=2.3.1",
-    "pandas~=2.3.1",
-    "pymoo~=0.6.1.5",
-    "torch~=2.7.1",
-
-    "matplotlib==3.3.4",
-    "pytest~=8.4",
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:__array__ implementation doesn't accept a copy keyword:DeprecationWarning",
+    "ignore:ExpectedImprovement has known numerical issues:botorch.exceptions.warnings.NumericsWarning:botorch.acquisition.analytic",
 ]
 
 [tool.hatch.envs.dev]
@@ -61,4 +54,8 @@ features = ["dev"]
 [tool.hatch.build.targets.sdist]
 include = [
     "/tidyhebo",
+    "/tests",
+    "/docs",
+    "/LICENSE.md",
+    "/examples",
 ]

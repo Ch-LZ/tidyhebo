@@ -3,100 +3,85 @@ import torch
 from gpytorch.distributions import MultivariateNormal  # typing only
 
 
-def yeo_johnson_transform(y: torch.Tensor, lam: float, epsilon:float = 1e-14):
-    """
-    YJ direct transformation. So far tested only for lam being a single value (not a vector)
-    """
-    # y allower to be any real number
+def _expm1_over_x(x: torch.Tensor, epsilon: float) -> torch.Tensor:
+    """Continuous expm1(x)/x, including its derivatives at zero."""
+    # Balance roundoff O(eps/|x|) in the regular derivative against
+    # the first omitted derivative term, x**9 / 3991680.
+    small = x.abs() < max(epsilon, (3991680 * torch.finfo(x.dtype).eps) ** (1 / 10))
+    # Keep *both* evaluated branches finite: torch.where alone does not stop
+    # autograd from propagating NaNs from a zero denominator or unused overflow.
+    t = torch.where(small, x, torch.zeros_like(x))
+    series = 1 + t * (1 / 2 + t * (1 / 6 + t * (1 / 24 + t * (
+        1 / 120 + t * (1 / 720 + t * (1 / 5040 + t * (
+        1 / 40320 + t * (1 / 362880 + t / 3628800))))))))
+    safe_x = torch.where(small, torch.ones_like(x), x)
+    return torch.where(small, series, torch.expm1(safe_x) / safe_x)
 
-    # prepare lam
+
+def _log1p_over_x(x: torch.Tensor, epsilon: float) -> torch.Tensor:
+    """Continuous log1p(x)/x on x > -1, with derivatives at zero."""
+    # The first omitted derivative term is 8*x**7/9; balance its
+    # magnitude against roundoff O(eps/|x|) in the regular derivative.
+    small = x.abs() < max(epsilon, (9 * torch.finfo(x.dtype).eps / 8) ** (1 / 8))
+    t = torch.where(small, x, torch.zeros_like(x))
+    series = 1 + t * (-1 / 2 + t * (1 / 3 + t * (-1 / 4 + t * (
+        1 / 5 + t * (-1 / 6 + t * (1 / 7 - t / 8))))))
+    safe_x = torch.where(small, torch.ones_like(x), x)
+    return torch.where(small, series, torch.log1p(safe_x) / safe_x)
+
+
+def yeo_johnson_transform(y: torch.Tensor, lam: float, epsilon: float = 1e-14) -> torch.Tensor:
+    """Yeo–Johnson transform with differentiable limits at lambda=0 and 2.
+
+    Lambda may be a scalar or a tensor expandable to y's shape. Degree-nine
+    series are used for |lambda*log1p(y)| < (3991680*dtype.eps)**(1/10)
+    on the positive branch; use (2-lambda)*log1p(-y) for y <= 0.
+    The cutoff balances truncation and roundoff in the first derivative;
+    epsilon sets a minimum cutoff.
+    """
     if isinstance(lam, (int, float)):
         lam = torch.tensor(lam, dtype=y.dtype, device=y.device)
-    # Expand lam to match y's shape if needed
     if lam.shape != y.shape:
         lam = lam.expand_as(y)
 
-    # print(f"y shape: {y.shape}, lam shape: {lam.shape}")
-
-    y_hat = torch.zeros_like(y)
-    y_gt_0 = (y > 0)
-    lam_near_0 = torch.abs(lam) < epsilon
-    lam_near_2 = torch.abs(lam - 2) < epsilon 
-    # For y >= 0:
-    # case 1: y >= 0, lam != 0
-    mask1 = y_gt_0 & ~lam_near_0
-    if mask1.any():
-        # y_hat = ((y + 1) ** lam - 1) / lam
-        inner = torch.log1p(y[mask1]) * lam[mask1]
-        y_hat[mask1] = torch.expm1(inner) / lam[mask1]
-
-    # case 2: y >= 0, lam == 0
-    mask2 = y_gt_0 & lam_near_0
-    if mask2.any():
-        y_hat[mask2] = torch.log1p(y[mask2])
-
-    # For y < 0
-    # case3: y < 0, lam != 2
-    mask3 = (~y_gt_0) & ~lam_near_2
-    if mask3.any():
-        # y_hat = -((-y + 1)**(2-lam)-1) / (2-lam)
-        inner = torch.log1p(-y[mask3]) * (2 - lam[mask3])
-        y_hat[mask3] = -1 * torch.expm1(inner) / (2 - lam[mask3])
-    
-    # case 4: y < 0, lam == 2
-    mask4 = (~y_gt_0) & lam_near_2
-    if mask4.any():
-        y_hat[mask4] = -1 * torch.log1p(-y[mask4])
-    
-    return y_hat
+    positive = y > 0
+    # Unlike abs(), this preserves the input derivative at y == 0.
+    magnitude = torch.log1p(torch.where(positive, y, -y))
+    exponent = torch.where(positive, lam, 2 - lam)
+    signed_log = torch.where(positive, magnitude, -magnitude)
+    return signed_log * _expm1_over_x(exponent * magnitude, epsilon)
 
 
-def inv_yeo_johnson_transform(y: torch.Tensor, lam: float, epsilon: float = 1e-14):
+def inv_yeo_johnson_transform(y: torch.Tensor, lam: float, epsilon: float = 1e-14) -> torch.Tensor:
+    """Inverse Yeo–Johnson, with differentiable limits at lambda=0 and 2.
+
+    With autograd active, degree-seven series use (9*dtype.eps/8)**(1/8)
+    as a cutoff on the dimensionless argument, with epsilon as a minimum.
+    Value-only calls use log1p and its continuous limit directly. The original
+    domain is unchanged: 1 + lambda*y > 0 on the positive branch and
+    1 - (2-lambda)*y > 0 on the negative branch.
     """
-    YJ inverse transformation. So far tested only for lam being a single value (not a vector)
-    """
-    # prepare lam
     if isinstance(lam, (int, float)):
         lam = torch.tensor(lam, dtype=y.dtype, device=y.device)
-    # Expand lam to match y's shape if needed
     if lam.shape != y.shape:
         lam = lam.expand_as(y)
 
-    # print(f"y shape: {y.shape}, lam shape: {lam.shape}")
-
-    y_hat = torch.zeros_like(y)
-
-    y_gt_0 = (y > 0)
-    lam_near_0 = torch.abs(lam) < epsilon
-    lam_near_2 = torch.abs(lam - 2) < epsilon
-    # For y >= 0:
-    # case 1: y >= 0, lam != 0
-    mask1 = y_gt_0 & ~lam_near_0
-    if mask1.any():
-        # y_hat = (y * lam) ** (1/lam) - 1
-        inner = y[mask1] * lam[mask1]
-        y_hat[mask1] = torch.expm1(torch.log1p(inner) / lam[mask1])
-
-    # case 2: y >= 0, lam == 0
-    mask2 = y_gt_0 & lam_near_0
-    if mask2.any():
-        y_hat[mask2] = torch.expm1(y[mask2])
-
-    # For y < 0
-    # case3: y < 0, lam != 2
-    mask3 = (~y_gt_0) & ~lam_near_2
-    if mask3.any():
-        # y_hat = -((-y + 1)**(2-lam)-1) / (2-lam)
-        inner = -(2 - lam[mask3]) * y[mask3]
-        log_term = torch.log1p(inner) / (2 - lam[mask3])
-        y_hat[mask3] = -1 * torch.expm1(log_term)
-
-    # case 4: y < 0, lam == 2
-    mask4 = (~y_gt_0) & lam_near_2
-    if mask4.any():
-        y_hat[mask4] = -1 * torch.expm1(-y[mask4])
-
-    return y_hat
+    positive = y > 0
+    magnitude = torch.where(positive, y, -y)
+    exponent = torch.where(positive, lam, 2 - lam)
+    if torch.is_grad_enabled() and (y.requires_grad or lam.requires_grad):
+        # The ratio needs a series for accurate derivatives by lambda.
+        inner = magnitude * _log1p_over_x(exponent * magnitude, epsilon)
+    else:
+        # Values alone need no polynomial: log1p avoids cancellation.
+        # Divide by its own argument so subnormal products remain accurate.
+        argument = exponent * magnitude
+        zero = argument == 0
+        safe_argument = torch.where(zero, 1.0, argument)
+        ratio = torch.where(zero, 1.0, torch.log1p(argument) / safe_argument)
+        inner = magnitude * ratio
+    result = torch.expm1(inner)
+    return torch.where(positive, result, -result)
 # endregion
 
 # region Gpytroch module
@@ -110,9 +95,11 @@ from gpytorch.constraints import Interval
 class YeoJohnsonGPytorch(GPytorchModule):
     """
     A module for Yeo-Johnson learnable transformation.
-    Tested for single outcome only.
+    Lambda is constrained to [0, 2], making the inverse valid on all real inputs.
+    The sigmoid maps finite raw parameters into the open interval;
+    exact endpoints can be assigned explicitly. Tested for single outcome only.
     """
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
         # _scale is set by YJWarpedExactMLL and does not require gradients.
@@ -125,43 +112,45 @@ class YeoJohnsonGPytorch(GPytorchModule):
             persistent=False,
         )
 
-        self.register_parameter("raw_lam", torch.nn.Parameter(torch.tensor(1.0 + 1e-6, dtype=torch.double)))
-        self.register_constraint("raw_lam", Interval(-3.0, 3.0))
-        self.register_prior("lam_prior", NormalPrior(loc=1.0 + 1e-6, scale=0.5),
+        # raw_lam=0 maps to lambda=1: start from the identity transform.
+        self.register_parameter("raw_lam", torch.nn.Parameter(torch.tensor(0.0, dtype=torch.double)))
+        self.register_constraint("raw_lam", Interval(0.0, 2.0))
+        self.register_prior("lam_prior", NormalPrior(loc=1.0, scale=0.5),
                             lambda m: m.lam,
                             lambda m, v: m._set_lam(v),)
 
     @property
-    def lam(self):
+    def lam(self) -> torch.Tensor:
         return self.raw_lam_constraint.transform(self.raw_lam)
 
 
     @lam.setter
-    def lam(self, value):
+    def lam(self, value) -> None:
         return self._set_lam(value)
 
 
-    def _set_lam(self, value):
+    def _set_lam(self, value) -> None:
         # only because seem to unable to use setter in a constructor
-        if not torch.is_tensor(value):
-            value = torch.as_tensor(value).to(self.raw_lam)
+        value = torch.as_tensor(value, dtype=self.raw_lam.dtype, device=self.raw_lam.device)
+        if not self.raw_lam_constraint.check(value):
+            raise ValueError("Yeo-Johnson lambda must be within [0, 2]")
         self.raw_lam.data.copy_(
             self.raw_lam_constraint.inverse_transform(value))
 
 
-    def forward(self, y):
+    def forward(self, y) -> torch.Tensor:
         y = y / self._scale
         rv = yeo_johnson_transform(y, lam=self.lam)
         return rv
 
 
-    def untransform(self, y_hat):
+    def untransform(self, y_hat) -> torch.Tensor:
         rv = inv_yeo_johnson_transform(y_hat, lam=self.lam)
         rv = rv * self._scale
         return rv
 
 
-    def log_jacobian(self, y0):
+    def log_jacobian(self, y0) -> torch.Tensor:
         """
         Log jacobian: log( |dT/dy| ) at point y0
         """
@@ -182,16 +171,18 @@ class YeoJohnsonGPytorch(GPytorchModule):
 # region likelihood
 from gpytorch.mlls import ExactMarginalLogLikelihood
 from botorch.models import SingleTaskGP
+from .mll import BaseMLL, GPMLLFunction
 
 
-class YJWarpedExactMLL(ExactMarginalLogLikelihood):
+class YJWarpedExactMLL(BaseMLL):
     """
     The class to train SingleTaskGP and YeoJohnson transform together
     and perform changes requried for that.
     Tested for single outcome tasks only.
     """
     def __init__(self, likelihood, model: SingleTaskGP, 
-                 warping: YeoJohnsonGPytorch, train_Y_raw: torch.Tensor):
+                 warping: YeoJohnsonGPytorch, train_Y_raw: torch.Tensor,
+                 gp_mll: GPMLLFunction = ExactMarginalLogLikelihood.forward) -> None:
         # Set warping parameter to the model
         # This is required to be within the model 
         # to restore previous state_dict in training time at fit_gpytorch_mll
@@ -204,7 +195,7 @@ class YJWarpedExactMLL(ExactMarginalLogLikelihood):
         delattr(model, "outcome_transform")
 
         # Register assembled model
-        super().__init__(likelihood, model)
+        super().__init__(likelihood, model, gp_mll=gp_mll)
         self.model: SingleTaskGP
 
         self.train_Y_raw: torch.Tensor = train_Y_raw
@@ -219,7 +210,7 @@ class YJWarpedExactMLL(ExactMarginalLogLikelihood):
         warping._scale = _scale  # should not require grad
 
 
-    def forward(self, output: MultivariateNormal, _target,  *params, **kwargs):
+    def forward(self, output: MultivariateNormal, _target,  *params, **kwargs) -> torch.Tensor:
         """
         Is used at botorch.optim.closures.model_closures -> @GetLossClosure.register(ExactMarginalLogLikelihood, object, object, NoneType)
         Params:
@@ -237,7 +228,7 @@ class YJWarpedExactMLL(ExactMarginalLogLikelihood):
         y_transformed = y_transformed.reshape(self.train_Y_raw.shape)
         y_transformed = y_transformed.squeeze(-1)
 
-        gp_mll_term = super().forward(
+        gp_mll_term = self._gp_mll(
             output,
             y_transformed,
             *params,
@@ -253,4 +244,5 @@ class YJWarpedExactMLL(ExactMarginalLogLikelihood):
         yj_term = log_jacobian.div_(num_data)
 
         return gp_mll_term + yj_term
+
 # endregion

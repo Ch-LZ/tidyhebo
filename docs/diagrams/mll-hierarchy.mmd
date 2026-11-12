@@ -1,0 +1,23 @@
+classDiagram
+ direction TB
+ class ExactMarginalLogLikelihood {
+  GPyTorch
+  forward(): likelihood + priors, divided by n
+ }
+ class YJWarpedExactMLL {
+  forward(): current z(lambda) + Jacobian
+  _gp_mll(): inherited from BaseMLL
+ }
+ class BaseMLL {
+  _gp_mll_impl: GPMLLFunction
+  __init__(..., gp_mll)
+  forward(output, target)
+  _gp_mll(output, target)
+ }
+ class ExactMLL {
+  Native targets
+  forward(): inherited from BaseMLL
+ }
+ ExactMarginalLogLikelihood <|-- BaseMLL
+ BaseMLL <|-- ExactMLL
+ BaseMLL <|-- YJWarpedExactMLL

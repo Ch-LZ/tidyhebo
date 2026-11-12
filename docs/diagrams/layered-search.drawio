@@ -1,0 +1,83 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" type="device" compressed="false">
+  <diagram id="layered-method" name="Layered search">
+    <mxGraphModel grid="1" gridSize="10" page="1" pageWidth="1280" pageHeight="1360">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="edge-0" edge="1" parent="1" source="input" target="copy" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeColor=#52677c;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-1" edge="1" parent="1" source="copy" target="points" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeColor=#52677c;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-2" edge="1" parent="1" source="copy" target="joint" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeColor=#52677c;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-3" edge="1" parent="1" source="points" target="pool" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeColor=#52677c;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-4" edge="1" parent="1" source="pool" target="index" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeColor=#52677c;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-5" edge="1" parent="1" source="joint" target="scale" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeColor=#52677c;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-6" edge="1" parent="1" source="scale" target="init" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeColor=#52677c;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-7" edge="1" parent="1" source="index" target="init" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeColor=#52677c;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-8" edge="1" parent="1" source="init" target="ga" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeColor=#52677c;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-9" edge="1" parent="1" source="ga" target="refine" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeColor=#52677c;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge-10" edge="1" parent="1" source="refine" target="front" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=0;endArrow=block;strokeColor=#52677c;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="input" value="Наблюдения X, y&#10;&#10;GP fit на CPU · input warp · YJ + gate" vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#ffe2bd;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="400" y="65" width="480" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="copy" value="inference_copy&#10;&#10;Независимая float64 GP/AF · CPU или CUDA" vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#eef0f3;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="400" y="185" width="480" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="points" value="point_pre_init · q = 1&#10;&#10;AnalyticMACE / QuadratureMACE&#10;Своя Sobol-нормировка · якоря + 6 лучей&#10;3 restart × 30 Adam · Sobol до 48 точек" vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#d8e8fa;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="60" y="345" width="500" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="pool" value="Пул точек&#10;&#10;Недоминируемые слои · novel / unique&#10;Ограничение pool_size = 96" vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#d8e8fa;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="60" y="515" width="500" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="index" value="small_batches_ga&#10;&#10;Индивид = q индексов пула&#10;Совместная AF полного батча&#10;NSGA-III: 48 × 5 поколений" vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#d8e8fa;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="60" y="675" width="500" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="joint" value="Совместная AF · q &gt; 1&#10;&#10;QMC MACE: qLogEI / qPI / qUCB&#10;512 семплов · исходный масштаб&#10;При q = 1 — точечная AF" vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#dfefe4;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="720" y="345" width="500" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="scale" value="Нормировка батчевого уровня&#10;&#10;Своя Sobol-калибровка для (q,d)&#10;Замороженный augmented Chebyshev" vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#dfefe4;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="720" y="515" width="500" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="init" value="_initialize · полные батчи&#10;&#10;Якоря + 6 лучей · 3 restart × 30 Adam&#10;Добавить батчи малого GA&#10;Sobol до 48 индивидов" vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#dfefe4;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="720" y="675" width="500" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="ga" value="batches_ga · NSGA-III&#10;&#10;48 индивидов / 48 потомков × 20&#10;Hungarian kernel matching → crossover&#10;Три исходных AF, без скаляризации" vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#dfefe4;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="720" y="855" width="500" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="refine" value="Финальное локальное уточнение&#10;&#10;До ceil(0.2 × N) направленных победителей&#10;15 Adam → merge → NSGA-III survival&#10;Сохранять лучшие допустимые restart" vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#fff2d1;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="720" y="1035" width="500" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="front" value="Фронт → suggest&#10;&#10;Один равномерно выбранный q-батч&#10;или весь фронт при return_all=True" vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#ffe2bd;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="720" y="1215" width="500" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="scalar" value="scalarization.py + local.py&#10;&#10;Chebyshev нужен локальному Adam.&#10;Якоря оптимизируют один критерий.&#10;Каждая строка Adam — отдельный restart." vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#fff2d1;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="60" y="900" width="500" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="constraints" value="Допустимость и представление&#10;&#10;Координаты в [0,1]; точки не наблюдались;&#10;нет повторов внутри батча.&#10;AF: GP-координаты; выход: GA-координаты.&#10;Порядок точек канонизируется." vertex="1" parent="1" style="rounded=1;whiteSpace=wrap;html=0;fillColor=#eef0f3;strokeColor=#52677c;fontSize=18;fontFamily=Helvetica;">
+          <mxGeometry x="60" y="1110" width="500" height="145" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
