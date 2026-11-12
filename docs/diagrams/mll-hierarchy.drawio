@@ -1,0 +1,77 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" compressed="false">
+  <diagram id="mll-hierarchy" name="MLL hierarchy">
+    <mxGraphModel dx="2200" dy="1200" grid="1" gridSize="10" page="1" pageWidth="2220" pageHeight="1320">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="tidyHEBO — MLL dependency injection" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;fontFamily=Helvetica;fontSize=34;fontColor=#334155;" vertex="1" parent="1">
+          <mxGeometry x="60" y="20" width="2000" height="50" as="geometry" />
+        </mxCell>
+        <object id="ExactMarginalLogLikelihood" label="ExactMarginalLogLikelihood" umlKind="class">
+          <mxCell vertex="1" parent="1" style="swimlane;html=0;startSize=52;horizontal=1;whiteSpace=wrap;align=center;fontFamily=Helvetica;fontSize=25;fontStyle=1;fillColor=#e2e8f0;swimlaneFillColor=#ffffff;strokeColor=#64748b;strokeWidth=2;">
+            <mxGeometry x="760" y="100" width="760" height="155" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="ExactMarginalLogLikelihood-members" value="GPyTorch&#10;forward(): likelihood + priors, divided by n" vertex="1" parent="ExactMarginalLogLikelihood" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=15;fontFamily=Helvetica;fontSize=22;fontColor=#1e293b;">
+          <mxGeometry x="0" y="60" width="760" height="95" as="geometry" />
+        </mxCell>
+        <object id="YJWarpedExactMLL" label="YJWarpedExactMLL" umlKind="class">
+          <mxCell vertex="1" parent="1" style="swimlane;html=0;startSize=52;horizontal=1;whiteSpace=wrap;align=center;fontFamily=Helvetica;fontSize=25;fontStyle=1;fillColor=#dbeafe;swimlaneFillColor=#ffffff;strokeColor=#3b82f6;strokeWidth=2;">
+            <mxGeometry x="1300" y="800" width="810" height="185" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="YJWarpedExactMLL-members" value="forward(): current z(lambda) + Jacobian&#10;_gp_mll(): inherited from BaseMLL" vertex="1" parent="YJWarpedExactMLL" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=15;fontFamily=Helvetica;fontSize=22;fontColor=#1e293b;">
+          <mxGeometry x="0" y="60" width="810" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="factory-map" value="Model._create_mll() injects the GP calculation into ExactMLL or YJWarpedExactMLL:&#10;&#10;SimpleModel       -&gt; ExactMarginalLogLikelihood.forward&#10;CenteredModel   -&gt; _centered_gp_mll&#10;ProfiledModel     -&gt; _profiled_gp_mll" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;fontFamily=Helvetica;fontSize=24;fontColor=#334155;" vertex="1" parent="1">
+          <mxGeometry x="70" y="1060" width="2100" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" value="Callback contract: likelihood + GP priors, divided by n. The YJ wrapper adds its Jacobian separately." style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;fontFamily=Helvetica;fontSize=22;fontColor=#334155;" vertex="1" parent="1">
+          <mxGeometry x="70" y="1260" width="2100" height="40" as="geometry" />
+        </mxCell>
+        <object id="BaseMLL" label="BaseMLL" umlKind="class">
+          <mxCell vertex="1" parent="1" style="swimlane;html=0;startSize=52;horizontal=1;whiteSpace=wrap;align=center;fontFamily=Helvetica;fontSize=25;fontStyle=1;fillColor=#dbeafe;swimlaneFillColor=#ffffff;strokeColor=#3b82f6;strokeWidth=2;">
+            <mxGeometry x="760" y="390" width="760" height="220" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="ExactMLL" label="ExactMLL" umlKind="class">
+          <mxCell vertex="1" parent="1" style="swimlane;html=0;startSize=52;horizontal=1;whiteSpace=wrap;align=center;fontFamily=Helvetica;fontSize=25;fontStyle=1;fillColor=#ffffff;swimlaneFillColor=#ffffff;strokeColor=#64748b;strokeWidth=2;">
+            <mxGeometry x="70" y="800" width="760" height="155" as="geometry" />
+          </mxCell>
+        </object>
+        <mxCell id="BaseMLL-members" value="_gp_mll_impl: GPMLLFunction&#10;__init__(..., gp_mll)&#10;forward(output, target)&#10;_gp_mll(output, target)" vertex="1" parent="BaseMLL" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=15;fontFamily=Helvetica;fontSize=22;fontColor=#1e293b;">
+          <mxGeometry x="0" y="60" width="760" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="ExactMLL-members" value="Native targets&#10;forward(): inherited from BaseMLL" vertex="1" parent="ExactMLL" style="text;html=0;whiteSpace=wrap;align=left;verticalAlign=top;spacingLeft=15;fontFamily=Helvetica;fontSize=22;fontColor=#1e293b;">
+          <mxGeometry x="0" y="60" width="760" height="95" as="geometry" />
+        </mxCell>
+        <object id="BaseMLL-native" label="" umlRelation="inheritance" umlTarget="ExactMarginalLogLikelihood">
+          <mxCell edge="1" parent="1" source="BaseMLL" style="endArrow=block;endFill=0;strokeColor=#475569;strokeWidth=2.4;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="ExactMarginalLogLikelihood">
+            <mxGeometry relative="1" as="geometry" />
+          </mxCell>
+        </object>
+        <object id="ExactMLL-base" label="" umlRelation="inheritance" umlTarget="BaseMLL">
+          <mxCell edge="1" parent="1" source="ExactMLL" style="endArrow=block;endFill=0;strokeColor=#475569;strokeWidth=2.4;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="BaseMLL">
+            <mxGeometry relative="1" as="geometry">
+              <Array as="points">
+                <mxPoint x="450" y="700" />
+                <mxPoint x="1140" y="700" />
+              </Array>
+            </mxGeometry>
+          </mxCell>
+        </object>
+        <object id="YJMLL-base" label="" umlRelation="inheritance" umlTarget="BaseMLL">
+          <mxCell edge="1" parent="1" source="YJWarpedExactMLL" style="endArrow=block;endFill=0;strokeColor=#475569;strokeWidth=2.4;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="BaseMLL">
+            <mxGeometry relative="1" as="geometry">
+              <Array as="points">
+                <mxPoint x="1705" y="700" />
+                <mxPoint x="1140" y="700" />
+              </Array>
+            </mxGeometry>
+          </mxCell>
+        </object>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

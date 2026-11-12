@@ -1,9 +1,12 @@
+from dataclasses import replace
+
 import pytest
 import torch
 import pandas as pd
 import numpy as np
 
 from tidyhebo.optimizer import tidyHEBO
+from tidyhebo.config import DiscreteSearchConfig
 from tidyhebo.mixed_params import RealP
 
 
@@ -24,10 +27,12 @@ def tidyhebo_discrete():
 
 
 def test_tidyhebo_discrete_suggest_single(tidyhebo_discrete):
-    """Проверяет, что suggest(candidates=...) возвращает одну точку из множества кандидатов."""
+    """Проверяет, что suggest() с DiscreteSearchConfig возвращает одну точку из множества кандидатов."""
     candidates = pd.DataFrame({"x": [0.2, 0.4, 0.6, 0.8]})
     
-    result = tidyhebo_discrete.suggest(candidates=candidates, return_all=False)
+    tidyhebo_discrete.config = replace(tidyhebo_discrete.config,
+        search=DiscreteSearchConfig(candidates=candidates), return_all=False)
+    result = tidyhebo_discrete.suggest()
     
     assert isinstance(result, pd.DataFrame)
     assert result.shape[0] == 1
@@ -35,10 +40,12 @@ def test_tidyhebo_discrete_suggest_single(tidyhebo_discrete):
 
 
 def test_tidyhebo_discrete_suggest_return_all(tidyhebo_discrete):
-    """Проверяет, что suggest(candidates=..., return_all=True) возвращает все точки Парето-фронта."""
+    """Проверяет, что config.return_all=True возвращает все точки Парето-фронта."""
     candidates = pd.DataFrame({"x": [0.2, 0.4, 0.6, 0.8]})
     
-    result = tidyhebo_discrete.suggest(candidates=candidates, return_all=True)
+    tidyhebo_discrete.config = replace(tidyhebo_discrete.config,
+        search=DiscreteSearchConfig(candidates=candidates), return_all=True)
+    result = tidyhebo_discrete.suggest()
     
     assert isinstance(result, pd.DataFrame)
     assert result.shape[0] >= 1
@@ -46,9 +53,9 @@ def test_tidyhebo_discrete_suggest_return_all(tidyhebo_discrete):
 
 
 def test_tidyhebo_discrete_suggest_fallback_to_continuous(tidyhebo_discrete):
-    """Проверяет, что при candidates=None используется непрерывный метод (не падает)."""
+    """Проверяет, что при GASearchConfig используется непрерывный метод (не падает)."""
     tidyhebo_discrete._init_design_generator = None
-    result = tidyhebo_discrete.suggest(candidates=None, return_all=False)
+    result = tidyhebo_discrete.suggest()
     
     assert isinstance(result, pd.DataFrame)
     assert result.shape[0] == 1

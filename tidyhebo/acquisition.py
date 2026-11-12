@@ -1,125 +1,125 @@
 import math
-import warnings
+from abc import abstractmethod
 
 import numpy as np
 import torch
 from botorch.acquisition import (
-    AcquisitionFunction,
-    qLogNoisyExpectedImprovement,
+    ExpectedImprovement,
+    LogExpectedImprovement,
+    ProbabilityOfImprovement,
+    UpperConfidenceBound,
     qLogExpectedImprovement,
     qProbabilityOfImprovement,
     qUpperConfidenceBound,
 )
-from botorch.models import SingleTaskGP
 from botorch.sampling.normal import SobolQMCNormalSampler
+from scipy.special import roots_hermite
 from torch import Tensor
 
-from .common import GP_Tensor
-from .yeo_johnson_warp import YeoJohnsonGPytorch
+from .base_acquisition import BaseAcquisition
+from .config import AcquisitionConfig
 
 
-class HedgedPareto(AcquisitionFunction):
-    """
-    Calculates acquisition triplet as in HEBO (https://doi.org/10.1613/jair.1.13643)
-    """
+class BaseMACE(BaseAcquisition):
+    """Shared state and input contract for the (LogEI, PI, UCB) triplet."""
 
-    def __init__(
-        self,
-        model: SingleTaskGP,
-        best_f: float,
-        beta: float,
-        train_x: GP_Tensor,
-        use_logei: bool = False,
-        objective=None,
-        outcome_warp: YeoJohnsonGPytorch | None = None,
-        consider_fast_acq_path=True,
-        quadrature_size: int = 64,
-        mc_samples: int = 4096,
-    ):
-        super().__init__(model)
-        self.model = model
-        self.best_f = self._prepare_best_f_tensor(best_f)
+    n_obj = 3
+
+    def __init__(self, model, config: AcquisitionConfig, best_f, train_x=None, outcome_warp=None):
+        super().__init__(model, config)
+        ref = model.train_inputs[0]
+        self.register_buffer("best_f", torch.as_tensor(best_f, dtype=ref.dtype, device=ref.device))
         self.outcome_warp = outcome_warp
-        self.use_logei = use_logei
-        self.beta_prime = math.sqrt(beta * math.pi / 2)
-        self.quadrature_size = quadrature_size
-        self.mc_samples = mc_samples
-        self.n_obj = 3
 
-        # Determine if the fast quadrature path can be used
-        self._use_fast_path = self._check_fast_path() if consider_fast_acq_path else False
+    def forward(self, X: Tensor) -> Tensor:
+        if X.shape[-2] != self.q:
+            raise ValueError(f"Expected q={self.q}, got X.shape={tuple(X.shape)}")
+        return self._scores(X)
 
-        # Initialize quadrature objects if the fast path is available
-        if self._use_fast_path:
-            self._init_fast_path()
+    @abstractmethod
+    def _scores(self, X: Tensor) -> Tensor: ...
 
-        # Always initialize MC-based acquisition objects (used as fallback or for q>1)
-        self._init_mc_objects(train_x, objective, beta)
 
-    # -------------------------------------------------------------------------
-    # Initialization helpers
-    # -------------------------------------------------------------------------
+class AnalyticMACE(BaseMACE):
+    """Exact Gaussian q=1 LogEI/PI/UCB on the acquisition outcome scale.
 
-    def _prepare_best_f_tensor(self, best_f: float) -> Tensor:
-        """Convert best_f to a tensor with proper dtype and device."""
-        return torch.as_tensor(
-            best_f,
-            dtype=self.model.train_inputs[0].dtype,
-            device=self.model.train_inputs[0].device,
+    A nonlinear active outcome warp makes that scale non-Gaussian; use
+    QuadratureMACE for such points. Joint q>1 requires QMC MACE.
+    """
+
+    def __init__(self, model, config, best_f, train_x=None, outcome_warp=None):
+        super().__init__(model, config, best_f, train_x, outcome_warp)
+        if config.q != 1 or outcome_warp is not None:
+            raise ValueError("AnalyticMACE requires q == 1 and Gaussian outcomes")
+        if config.evaluation != "analytic":
+            raise ValueError("AnalyticMACE requires analytic evaluation")
+        self.logei = LogExpectedImprovement(model, self.best_f)
+        self.pi = ProbabilityOfImprovement(model, self.best_f)
+        self.ucb = UpperConfidenceBound(model, config.beta)
+
+    def _scores(self, X):
+        return torch.stack((self.logei(X), self.pi(X), self.ucb(X)), dim=-1)
+
+
+class MACE(BaseMACE, _target_="MACE"):
+    """Native QMC triplet for both single points and joint q-batches."""
+
+    def __init__(self, model, config: AcquisitionConfig, best_f, train_x=None, outcome_warp=None):
+        super().__init__(model, config, best_f, train_x, outcome_warp)
+        if config.evaluation != "qmc":
+            raise ValueError("QMC MACE requires qmc evaluation; use QuadratureMACE for quadrature")
+        objective = self._original_scale_objective(outcome_warp)
+
+        def sampler():
+            return SobolQMCNormalSampler(torch.Size([config.mc_samples]), seed=config.qmc_seed)
+
+        self.qLogEI = qLogExpectedImprovement(model, self.best_f, sampler=sampler(), objective=objective)
+        self.qPI = qProbabilityOfImprovement(
+            model, sampler=sampler(), best_f=self.best_f, objective=objective
+        )
+        self.qUCB = qUpperConfidenceBound(model, config.beta, sampler=sampler(), objective=objective)
+
+    def _scores(self, X: Tensor) -> Tensor:
+        return torch.stack((self.qLogEI(X), self.qPI(X), self.qUCB(X)), dim=-1)
+
+
+class SharedMACE(MACE):
+    """Reuse samples only when the three native samplers have the SAME seed.
+
+    For seed=None the original MACE constructor chooses three different seeds;
+    preserve that behavior rather than changing the estimator. BoTorch 0.14's
+    native reductions retain its stable qLogEI smoothing and log-mean-exp.
+    """
+
+    def _scores(self, X):
+        functions = (self.qLogEI, self.qPI, self.qUCB)
+        if len({f.sampler.seed for f in functions}) != 1:
+            return super()._scores(X)
+        _, objectives = self.qLogEI._get_samples_and_objectives(X)
+        return torch.stack(
+            [f._sample_reduction(f._q_reduction(f._sample_forward(objectives))) for f in functions], dim=-1
         )
 
 
-    def _check_fast_path(self) -> bool:
-        """
-        Check whether the quadrature‑based fast path can be used.
-        It is valid only when the Yeo‑Johnson lambda is within [0, 2].
-        """
-        if self.outcome_warp is None:
-            return False
-        lam = float(self.outcome_warp.lam.detach())
-        if 0.0 <= lam <= 2.0:
-            return True
-        warnings.warn(
-            "Yeo-Johnson lambda is outside [0, 2]; falling back to "
-            "the Monte Carlo acquisition implementation because the "
-            "inverse transform is not defined on the full Gaussian "
-            "posterior support.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        return False
+class QuadratureMACE(BaseMACE):
+    """Single-point triplet from one posterior and deterministic quadratures."""
 
-
-    def _init_fast_path(self):
-        """Load nodes and weights for Gauss‑Legendre and Gauss‑Hermite quadratures."""
-        # Legendre quadrature (used for EI)
-        leg_nodes, leg_weights = np.polynomial.legendre.leggauss(self.quadrature_size)
+    def __init__(self, model, config: AcquisitionConfig, best_f, train_x=None, outcome_warp=None):
+        super().__init__(model, config, best_f, train_x, outcome_warp)
+        if config.q != 1:
+            raise ValueError("QuadratureMACE requires q == 1")
+        if outcome_warp is None:
+            raise ValueError("Quadrature requires active Yeo-Johnson warping after the gate")
+        if config.evaluation != "quadrature":
+            raise ValueError("QuadratureMACE requires quadrature evaluation")
+        self.beta_prime = math.sqrt(config.beta * math.pi / 2)
+        leg_nodes, leg_weights = np.polynomial.legendre.leggauss(config.quadrature_size)
         self.register_buffer("legendre_nodes", self.best_f.new_tensor(leg_nodes))
         self.register_buffer("legendre_weights", self.best_f.new_tensor(leg_weights))
-
-        # Hermite quadrature (used for UCB)
-        herm_nodes, herm_weights = np.polynomial.hermite.hermgauss(self.quadrature_size)
+        # SciPy's Hermite rule remains stable at the supported large orders.
+        herm_nodes, herm_weights = roots_hermite(config.quadrature_size)
         self.register_buffer("hermite_nodes", self.best_f.new_tensor(herm_nodes))
         self.register_buffer("hermite_weights", self.best_f.new_tensor(herm_weights))
-
-
-    def _init_mc_objects(self, train_x: GP_Tensor, objective, beta: float):
-        """Create Monte‑Carlo‑based acquisition function objects (always needed)."""
-        sampler = SobolQMCNormalSampler(sample_shape=torch.Size([self.mc_samples]))
-
-        # qLogEI or qLogNEI
-        if not self.use_logei:
-            self.qLogNEI = qLogNoisyExpectedImprovement(self.model, X_baseline=train_x, sampler=sampler, objective=objective,)
-        else:
-            self.qLogNEI = qLogExpectedImprovement(self.model, best_f=self.best_f, sampler=sampler, objective=objective,)
-        # qPI
-        self.qPI = qProbabilityOfImprovement(self.model, best_f=self.best_f, sampler=SobolQMCNormalSampler(sample_shape=torch.Size([self.mc_samples])), objective=objective,)
-        # qUCB
-        self.q_UCB = qUpperConfidenceBound(self.model, beta=beta, sampler=SobolQMCNormalSampler(sample_shape=torch.Size([self.mc_samples])), objective=objective,)
-
-    # -------------------------------------------------------------------------
-    # Posterior helpers
-    # -------------------------------------------------------------------------
 
     def _posterior_parameters(self, X: Tensor) -> tuple[Tensor, Tensor]:
         """Return the mean and standard deviation of the posterior at points X."""
@@ -129,7 +129,6 @@ class HedgedPareto(AcquisitionFunction):
         tiny = torch.finfo(variance.dtype).tiny
         return mean, variance.clamp_min(tiny).sqrt()
 
-
     def _inverse_warp(self, z: Tensor) -> Tensor:
         """Apply the inverse Yeo‑Johnson transformation."""
         return self.outcome_warp.untransform(z)
@@ -138,32 +137,45 @@ class HedgedPareto(AcquisitionFunction):
     # Fast quadrature‑based acquisition implementations
     # -------------------------------------------------------------------------
 
-    def _fast_pi(self, mean: Tensor, sigma: Tensor) -> Tensor:
-        """Probability of Improvement (PI) via quadrature."""
+    def _pi(self, mean: Tensor, sigma: Tensor) -> Tensor:
+        """Analytic PI in latent Gaussian space under the monotone outcome warp."""
         best_z = self.outcome_warp(self.best_f)
         standardized = (mean - best_z) / sigma
         return torch.special.ndtr(standardized)
 
+    @staticmethod
+    def _normal_quantile_from_log_prob(log_prob: Tensor) -> Tensor:
+        """Inverse normal CDF without underflow in the far left tail."""
+        tail = log_prob < -20.0
+        # Clamp the unused branch, so ndtri never sees an underflowed zero.
+        result = torch.special.ndtri(log_prob.clamp_min(-20.0).exp())
+        tail_log_prob = log_prob[tail]
+        z = -torch.sqrt(-2.0 * tail_log_prob)
+        # Newton solve log(Phi(z)) = log_prob. The asymptotic initial guess
+        # converges rapidly; all operations retain input gradients.
+        for _ in range(6):
+            log_cdf = torch.special.log_ndtr(z)
+            slope = (-0.5 * z.square() - 0.5 * math.log(2 * math.pi) - log_cdf).exp()
+            z = z - (log_cdf - tail_log_prob) / slope
+        return result.masked_scatter(tail, z)
 
-    def _fast_ei(self, mean: Tensor, sigma: Tensor) -> Tensor:
-        """Expected Improvement (EI) via Gauss‑Legendre quadrature."""
+    def _logei(self, mean: Tensor, sigma: Tensor) -> Tensor:
+        """Log EI via Gauss-Legendre quadrature in survival-probability space."""
         best_z = self.outcome_warp(self.best_f)
-        lower_prob = torch.special.ndtr((best_z - mean) / sigma)
-        tail_prob = 1.0 - lower_prob
-
-        nodes = self.legendre_nodes
-        probs = lower_prob.unsqueeze(-1) + 0.5 * tail_prob.unsqueeze(-1) * (nodes + 1.0)
-        eps = torch.finfo(probs.dtype).eps
-        probs = probs.clamp(min=eps, max=1.0 - eps)
-
-        latent = mean.unsqueeze(-1) + sigma.unsqueeze(-1) * torch.special.ndtri(probs)
+        log_tail = torch.special.log_ndtr((mean - best_z) / sigma)
+        u = 0.5 * (self.legendre_nodes + 1.0)
+        log_survival = log_tail.unsqueeze(-1) + u.log()
+        latent = mean.unsqueeze(-1) - sigma.unsqueeze(-1) * self._normal_quantile_from_log_prob(log_survival)
         values = self._inverse_warp(latent)
-        improvement = (values - self.best_f).clamp_min(0.0)
+        # Positive weights and improvements are summed directly in log space.
+        # A floor only guards roundoff in the inverse-warp subtraction.
+        improvement = (values - self.best_f).clamp_min(torch.finfo(values.dtype).tiny)
+        return log_tail + torch.logsumexp(
+            improvement.log() + (0.5 * self.legendre_weights).log(),
+            dim=-1,
+        )
 
-        return 0.5 * tail_prob * (improvement * self.legendre_weights).sum(dim=-1)
-
-
-    def _fast_ucb(self, mean: Tensor, sigma: Tensor) -> Tensor:
+    def _ucb(self, mean: Tensor, sigma: Tensor) -> Tensor:
         """Upper Confidence Bound (UCB) via Gauss‑Hermite quadrature."""
         nodes = self.hermite_nodes
         latent = mean.unsqueeze(-1) + math.sqrt(2.0) * sigma.unsqueeze(-1) * nodes
@@ -175,34 +187,55 @@ class HedgedPareto(AcquisitionFunction):
 
         return outcome_mean + self.beta_prime * mean_abs_dev
 
-    # -------------------------------------------------------------------------
-    # Main forward pass
-    # -------------------------------------------------------------------------
+    def _scores(self, X: Tensor) -> Tensor:
+        mean, sigma = self._posterior_parameters(X)
+        return torch.stack((self._logei(mean, sigma), self._pi(mean, sigma), self._ucb(mean, sigma)), dim=-1)
+
+
+class BoTorchScalarAcquisition(BaseAcquisition):
+    """Native analytic Gaussian acquisition, with an explicit objective axis."""
+
+    n_obj = 1
+    native_type = ExpectedImprovement
+
+    def __init__(self, model, config: AcquisitionConfig, best_f, train_x, outcome_warp=None):
+        super().__init__(model, config)
+        if outcome_warp is not None:
+            raise ValueError(
+                "Analytic EI/LogEI requires Gaussian outcomes; use output_transform='standardize'"
+            )
+        if config.evaluation != "analytic":
+            raise NotImplementedError("Scalar EI/LogEI supports analytic EI only")
+        self.native_acqf = self.native_type(model=model, best_f=best_f)
 
     def forward(self, X: Tensor) -> Tensor:
-        """
-        Compute the triplet (EI, PI, UCB) for candidate points X.
-        Uses the fast quadrature path when possible, otherwise falls back to MC.
-        """
-        # If the fast path is unavailable or X has more than one point (q>1),
-        # use the MC‑based acquisition objects.
-        #* Note: q here for special BoTorch batched acquisition (see: https://botorch.org/docs/acquisition.html)
-        if (not self._use_fast_path) or X.shape[-2] != 1:
-            val_ei = torch.exp(self.qLogNEI(X))
-            val_pi = self.qPI(X)
-            val_ucb = self.q_UCB(X)
-            return torch.column_stack((val_ei, val_pi, val_ucb))
+        return self.native_acqf(X).unsqueeze(-1)
 
-        # Fast path: one posterior evaluation supplies all three objectives.
-        mean, sigma = self._posterior_parameters(X)
 
-        # EI: use the fast method if use_logei is True, otherwise keep the MC version.
-        if self.use_logei:
-            val_ei = self._fast_ei(mean, sigma)
-        else:
-            val_ei = torch.exp(self.qLogNEI(X))
+class EI(BoTorchScalarAcquisition, _target_="EI"):
+    """Native analytic expected improvement."""
 
-        val_pi = self._fast_pi(mean, sigma)
-        val_ucb = self._fast_ucb(mean, sigma)
 
-        return torch.column_stack((val_ei, val_pi, val_ucb))
+class LogEI(BoTorchScalarAcquisition, _target_="LogEI"):
+    """Native analytic log expected improvement."""
+
+    native_type = LogExpectedImprovement
+
+
+class qLogEI(BaseAcquisition, _target_="qLogEI"):
+    """Monte Carlo log-EI in original outcome units, including a retained YJ warp."""
+
+    n_obj = 1
+
+    def __init__(self, model, config: AcquisitionConfig, best_f, train_x=None, outcome_warp=None):
+        super().__init__(model, config)
+        if config.evaluation != "qmc":
+            raise ValueError("qLogEI requires qmc evaluation")
+        self.native_acqf = qLogExpectedImprovement(
+            model=model, best_f=best_f,
+            sampler=SobolQMCNormalSampler(torch.Size([config.mc_samples]), seed=config.qmc_seed),
+            objective=self._original_scale_objective(outcome_warp),
+        )
+
+    def forward(self, X: Tensor) -> Tensor:
+        return self.native_acqf(X).unsqueeze(-1)

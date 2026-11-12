@@ -8,7 +8,7 @@ from functools import cached_property
 import pymoo.core.variable as pmv
 from typing import List, Optional, Dict, Any
 
-from .common import dtype, device, GA_Tensor, GP_Tensor, DS_Tensor
+from .common import GA_Tensor, GP_Tensor, DS_Tensor
 
 
 class AbstractParameter(ABC):
@@ -164,7 +164,7 @@ class BoolP(DiscreteParam):
     
     #* DS <-> GA
     def from_DS_to_GA(self, X: DS_Tensor) -> GA_Tensor:
-        return (X + 1).to(dtype=dtype)
+        return (X + 1).to(dtype=torch.double)
 
     def from_GA_to_DS(self, X: GA_Tensor) -> DS_Tensor:
         return (X - 1).round().to(torch.bool)
@@ -187,7 +187,7 @@ class IntegerP(DiscreteParam):
 
     #* DS <-> GA
     def from_DS_to_GA(self, X: DS_Tensor) -> GA_Tensor:
-        return X.to(dtype=dtype) - self._shift + 1
+        return X.to(dtype=torch.double) - self._shift + 1
 
     def from_GA_to_DS(self, X: GA_Tensor) -> DS_Tensor:
         return X - 1 + self._shift
@@ -230,7 +230,7 @@ class CategoricalP(DiscreteParam):
             return X
         else:  # numeric categories
             X_ga = torch.tensor(
-                [self.cat_to_index[elem.item()] for elem in X], dtype=dtype)
+                [self.cat_to_index[elem.item()] for elem in X], dtype=torch.double)
             return X_ga
 
 
@@ -242,7 +242,7 @@ class CategoricalP(DiscreteParam):
             return X
         else:  # numeric categories
             X_ds = torch.tensor(
-                [self.index_to_cat[elem.item()] for elem in X.round().to(dtype=int)], dtype=dtype)
+                [self.index_to_cat[elem.item()] for elem in X.round().to(dtype=int)], dtype=torch.double)
             return X_ds
 
     @cached_property

@@ -11,9 +11,8 @@ import torch
 import pandas as pd
 from typing import NewType
 
-dtype = torch.double
-# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")  #* попытки заставить работать на gpu оставлены на потом.
+# Project convention: floating-point computations use torch.double (float64).
+# This convention is implicit in parts of the code; no global default is set here.
 
 
 GA_Tensor = NewType("GA_Tensor", torch.Tensor)

@@ -4,7 +4,8 @@ from unittest.mock import patch
 import torch
 from botorch.models import SingleTaskGP
 
-from tidyhebo.acquisition import HedgedPareto
+from tidyhebo.acquisition import QuadratureMACE
+from tidyhebo.config import AcquisitionConfig
 from tidyhebo.yeo_johnson_warp import YeoJohnsonGPytorch, YJWarpedExactMLL
 
 
@@ -63,15 +64,12 @@ def test_fast_acquisition_matches_direct_posterior_sampling():
 
     best_f = float(train_y.max())
     beta = 4.0
-    acquisition = HedgedPareto(
+    acquisition = QuadratureMACE(
         model=model,
         best_f=best_f,
-        beta=beta,
         train_x=train_x,
-        use_logei=True,
         outcome_warp=warp,
-        quadrature_size=64,
-        mc_samples=32,
+        config=AcquisitionConfig(evaluation="quadrature", beta=beta, quadrature_size=64, mc_samples=32),
     )
     candidates = torch.linspace(0.05, 0.95, 7, dtype=torch.double).reshape(7, 1, 1)
 
@@ -92,6 +90,6 @@ def test_fast_acquisition_matches_direct_posterior_sampling():
             dim=-1,
         )
 
-    assert torch.allclose(fast_values[:, 0], reference[:, 0], atol=3e-3, rtol=3e-2)
+    assert torch.allclose(fast_values[:, 0].exp(), reference[:, 0], atol=3e-3, rtol=3e-2)
     assert torch.allclose(fast_values[:, 1], reference[:, 1], atol=3e-3, rtol=3e-2)
     assert torch.allclose(fast_values[:, 2], reference[:, 2], atol=8e-3, rtol=1e-2)

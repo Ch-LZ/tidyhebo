@@ -2,11 +2,10 @@ import numpy as np
 import pandas as pd
 import torch
 
-from functools import cached_property
-from typing import List, Iterator
+from typing import List
 
-from .common import dtype, device, DS_df, DS_Tensor, GA_Tensor, GP_Tensor
-from .mixed_params import AbstractParameter, DiscreteParam, RealParam, CategoricalP, IntegerP, BoolP, RealP, DiscreteRealP, RealPowP
+from .common import DS_df, DS_Tensor, GA_Tensor, GP_Tensor
+from .mixed_params import AbstractParameter, CategoricalP, IntegerP, BoolP, RealP, DiscreteRealP, RealPowP
 
 
 # region MixedDesign
@@ -124,39 +123,33 @@ class MixedDesignSpace:
             self._map_categories_here = value
 
 
-    @cached_property
-    def _large_GA_sample(self) -> GA_Tensor:
+    def sample_unobserved(self, train_x: GA_Tensor, q: int = 1, *, max_draws: int = 4096) -> GA_Tensor:
+        """Draw uniformly in [0, 1)^d and apply the existing GA novelty predicate.
+
+        At most max_draws proposals are generated in chunks of 256. Selected points
+        are also excluded, so a q-batch is mutually novel. Failure to find q points
+        within the budget does not prove that the domain is exhausted.
         """
-        Большой и достаточно разнообразный семпл из GA-space, 
-        заведомо достаточный чтобы получить новую точку в случае фейла сложной оптимизации (очень редкое событие)
-        Потому что алгоритм планируется использовать на величинах порядка <~10 осей и кардинальность каждой из дискретных будет небольшой
-        и количество непрерывных осей будет маленьким как правило.
-        """
-        # просто каждую непрерывную ось на 100 частей попилить и всё.
-        variants = self.__full_space_variants()
-        res = torch.cartesian_prod(*variants)
-        if res.dim() == 1:
-            res = res.unsqueeze(-1)
-        return res
-
-
-    def _large_GA_sample_iter(self) -> Iterator:
-        from itertools import product
-        variants = self.__full_space_variants()
-        res = product(*variants)
-        return res
-
-
-    def __full_space_variants(self):
-        variants = []
-        for p in self.params:
-            if isinstance(p, DiscreteParam):
-                variants.append(torch.arange(p.ga_lb, p.ga_ub + 1).to(dtype=dtype))
-            elif isinstance(p, RealParam):
-                variants.append(torch.linspace(p.ga_lb, p.ga_ub, steps=100).to(dtype=dtype))
-            else:
-                assert False, "Unsupported parameter type"
-        return variants
+        if q < 1 or max_draws < 1:
+            raise ValueError("q and max_draws must be positive")
+        selected = []
+        for start in range(0, max_draws, 256):
+            gp = torch.rand((min(256, max_draws - start), len(self.params)),
+                            dtype=train_x.dtype, device=train_x.device)
+            pool = self.from_GP_to_GA(gp)
+            old = torch.cat((train_x, *selected)) if selected else train_x
+            pool = pool[self.are_values_new(pool, old)]
+            while len(pool):
+                point = pool[:1]
+                selected.append(point)
+                if len(selected) == q:
+                    return torch.cat(selected)
+                pool = pool[self.are_values_new(pool, point)]
+        raise RuntimeError(
+            f"Could not construct q={q} novel fallback points after {max_draws} random draws; "
+            "the space may be exhausted or the remaining region too small. "
+            "Increase GASearchConfig.fallback_samples to allow more attempts."
+        )
 
 
     def __repr__(self) -> str:
